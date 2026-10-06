@@ -36,7 +36,7 @@ DESKTOP = """<!doctype html><html lang="zh-CN"><meta charset="utf-8">
 <style>body{margin:0;background:#eaf0f8;font:14px system-ui;color:#172038}header{padding:10px 16px;display:flex;align-items:center;gap:14px;flex-wrap:wrap}button{padding:8px 12px;border:1px solid #ccd4e0;border-radius:8px;background:white;cursor:pointer}iframe{width:100%;height:calc(100vh - 100px);border:0;background:#202020}small{display:block;padding:0 16px 8px}#state{flex:1}</style>
 <header><b>Google 登录浏览器</b><span id="state">连接浏览器…</span><button id="login">打开 BundleFoundry Google 登录</button><button id="save">保存并关闭浏览器</button></header>
 <small>直接在下方真实浏览器的 accounts.google.com 页面登录。页面顶部地址栏可核对来源。成功后会自动加密保存 BundleFoundry 会话。Gmail 后台 OAuth 授权另需配置。</small>
-<iframe src="/novnc/vnc.html?autoconnect=true&amp;resize=scale&amp;path=websockify" allow="clipboard-read; clipboard-write" title="真实 Chrome 浏览器"></iframe>
+<iframe src="/novnc/vnc.html?autoconnect=true&amp;resize=scale&amp;path=/websockify" allow="clipboard-read; clipboard-write" title="真实 Chrome 浏览器"></iframe>
 <script>async function act(path){const r=await fetch(path,{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});const data=await r.json();if(!r.ok)alert(data.error||'操作失败');}
 document.getElementById('login').onclick=()=>act('/api/login');document.getElementById('save').onclick=()=>act('/api/finish');
 async function status(){try{const r=await fetch('/api/status');if(!r.ok){location.replace('/');return;}const s=await r.json();document.getElementById('state').textContent=s.profile_encrypted?'已保存并关闭；Google 浏览器资料已加密':s.bundle_session_saved?'BundleFoundry 会话已加密保存':'等待你完成 Google 登录';}catch{document.getElementById('state').textContent='暂时断开，正在重连…';}}status();setInterval(status,3000);</script></html>"""
