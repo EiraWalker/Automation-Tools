@@ -1,3 +1,21 @@
+# ChatGPT Queue 1.6.2 验证
+
+日期：2026-10-06。51 项状态机、DOM 和完整安装脚本测试通过，语法检查通过。
+
+构建产物与真实 Tampermonkey 已安装源码的 SHA-256 一致：
+
+```text
+e015fb0aa6f3f5ae8753a9789c948426bad3eccc002cc2558b98803fb6b7dee7
+```
+
+1.6.2 已正式安装到原生 Firefox，安装源码 SHA-256 与产物一致。原生 Ctrl+Q 将一条简短消息入队，网页接收并完成回答；生成时立即出队。另以空输入框确认原生 keydown 的 isTrusted=true、defaultPrevented=true，不发送额外消息。常驻提示为 `Ctrl + Q  Enqueue`；51 项测试及语法检查通过。测试开始时草稿为空，测试期间新输入的草稿完整保留；Console 恢复为空并关闭，临时油猴编辑器关闭。
+
+后台 AgentCapture WGC 截图并查看确认实际回复、空队列及新快捷键提示；截图过程前台窗口未改变。私人截图、草稿、扩展 UUID 和会话地址没有发布。
+
+快捷键回归覆盖：Ctrl+Q 入队、Caps Lock 的 Q、IME 和其他文本框不拦截、Ctrl+Enter 不再拦截、忙碌时普通 Enter 入队、Shift+Enter 保留换行。完整生成脚本测试覆盖 document 事件监听，避免仅修改提示或孤立函数。
+
+本次没有重新执行全部错误注入或主题切换；既有行为见下方 1.6.1 记录与[套件验证记录](../../VALIDATION.md)。
+
 # ChatGPT Queue 1.6.1 验证
 
 日期：2026-10-06。50 项状态机、DOM 和完整安装脚本测试通过，语法检查通过。

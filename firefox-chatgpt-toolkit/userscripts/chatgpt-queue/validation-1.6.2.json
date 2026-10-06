@@ -1,0 +1,33 @@
+{
+  "version": "1.6.2",
+  "date": "2026-10-06",
+  "sourceSha256": "e015fb0aa6f3f5ae8753a9789c948426bad3eccc002cc2558b98803fb6b7dee7",
+  "unitTests": 51,
+  "realFirefox": true,
+  "installedVerified": true,
+  "shortcut": "Ctrl+Q",
+  "runtime": {
+    "nativeKeyTrusted": true,
+    "defaultPrevented": true,
+    "editorCleared": true,
+    "queueDisplayed": true,
+    "messageAccepted": true,
+    "poppedWhileBusy": true,
+    "responsesCompleted": 1,
+    "hint": "Ctrl + Q  Enqueue"
+  },
+  "finalState": {
+    "queueLength": 0,
+    "active": null,
+    "fault": null,
+    "paused": true
+  },
+  "newUserDraftPreserved": true,
+  "consoleInputRestored": true,
+  "backgroundCapture": {
+    "method": "wgc",
+    "foregroundPreserved": true,
+    "imageInspected": true,
+    "capturedDuringGeneration": false
+  }
+}

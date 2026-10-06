@@ -54,6 +54,30 @@ test('installed click handler allows shadow queue controls when the native send 
   assert.equal(host.shadowRoot.querySelectorAll('.row').length, 1);
   f.close();
 });
+test('installed document listener enqueues with Ctrl Q and leaves old Ctrl Enter native while busy', async t => {
+  const f = fixture(), w = f.w;
+  t.after(() => f.close());
+  f.adapter.sendButton().dataset.testid = 'stop-button';
+  let saved = core.emptyState();
+  w.module = undefined; w.process = undefined; w.structuredClone = structuredClone;
+  w.GM_getValue = (_key, fallback) => fallback === null ? saved : fallback;
+  w.GM_setValue = (_key, value) => { saved = structuredClone(value); };
+  w.GM_registerMenuCommand = () => {}; w.GM_addValueChangeListener = () => 0; w.GM_removeValueChangeListener = () => {};
+  Object.defineProperty(w.navigator, 'locks', { value: { request: (_name, _options, callback) => {
+    callback({}); return new w.Promise(() => {});
+  } } });
+  w.eval(fs.readFileSync(path.join(__dirname, '../chatgpt-queue.user.js'), 'utf8'));
+  await new Promise(resolve => setImmediate(resolve));
+  const editor = f.adapter.editor(); editor.value = 'native shortcut';
+  assert.equal(editor.dispatchEvent(new w.KeyboardEvent('keydown', { key: 'Enter', ctrlKey: true, bubbles: true, cancelable: true })), true);
+  assert.equal(saved.items.length, 0); assert.equal(editor.value, 'native shortcut');
+  assert.equal(editor.dispatchEvent(new w.KeyboardEvent('keydown', { key: 'q', ctrlKey: true, bubbles: true, cancelable: true })), false);
+  assert.equal(saved.items[0].text, 'native shortcut'); assert.equal(saved.paused, false); assert.equal(editor.value, '');
+  const root = w.document.getElementById('chatgpt-queue-accent').shadowRoot;
+  assert.equal(root.querySelector('.hint').textContent, 'Ctrl + Q  Enqueue');
+  assert.equal(root.querySelectorAll('.row').length, 1);
+});
+
 test('current completed turn is recognized, a new unanswered user turn is not', () => {
   const f = fixture(); assert.equal(f.adapter.snapshot().complete, true);
   const user = f.w.document.createElement('div'); user.dataset.messageAuthorRole = 'user'; user.textContent = 'new';
@@ -119,14 +143,16 @@ test('queue renders plain text without creating any message editor', () => {
   assert.equal(panel.root.querySelectorAll('textarea,input,[contenteditable]').length, 0); f.close();
 });
 
-test('native enqueue shortcut respects IME, regular Enter, and other text fields', () => {
+test('Ctrl Q respects IME, modifier keys, other text fields, and Caps Lock', () => {
   const f = fixture(MODERN); let count = 0; const editor = f.adapter.editor();
   const child = f.w.document.createElement('p'); editor.append(child);
   f.w.document.addEventListener('keydown', e => f.enqueueShortcut(e, editor, () => count++), true);
-  const key = (target, options) => target.dispatchEvent(new f.w.KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true, ...options }));
+  const key = (target, options) => target.dispatchEvent(new f.w.KeyboardEvent('keydown', { key: 'q', bubbles: true, cancelable: true, ...options }));
   key(child, { ctrlKey: true, isComposing: true }); key(child, {}); key(f.w.document.body, { ctrlKey: true });
+  for (const options of [{ metaKey: true }, { ctrlKey: true, metaKey: true }, { ctrlKey: true, shiftKey: true }, { ctrlKey: true, altKey: true }, { key: 'Enter', ctrlKey: true }]) assert.equal(key(child, options), true);
   assert.equal(count, 0); assert.equal(key(child, { ctrlKey: true }), false);
-  assert.equal(count, 1); f.close();
+  assert.equal(count, 1); assert.equal(key(child, { key: 'Q', ctrlKey: true }), false);
+  assert.equal(count, 2); f.close();
 });
 
 function nativeQueueFixture() {
@@ -137,7 +163,7 @@ function nativeQueueFixture() {
 test('shortcut hint stays visible before enqueue and after clearing while empty list and actions hide', () => {
   const f = nativeQueueFixture(), panel = new f.Panel({}); f.w.document.body.append(panel.host);
   const hint = panel.root.querySelector('.hint');
-  assert.equal(panel.host.hidden, false); assert.equal(hint.textContent, 'Ctrl + Enter  Enqueue');
+  assert.equal(panel.host.hidden, false); assert.equal(hint.textContent, 'Ctrl + Q  Enqueue');
   panel.render(f.engine, true); assert.equal(panel.host.hidden, false);
   assert.equal(panel.list.hidden, true); assert.equal(panel.queueActions.hidden, true);
   assert.equal(hint.closest('[hidden]'), null);
@@ -213,7 +239,7 @@ test('enqueue shortcut transfers native text and clears the same original editor
   const f = nativeQueueFixture(), editor = f.adapter.editor();
   editor.value = 'first\nsecond';
   f.w.document.addEventListener('keydown', event => f.enqueueShortcut(event, editor, () => f.input.capture()), true);
-  editor.dispatchEvent(new f.w.KeyboardEvent('keydown', { key: 'Enter', ctrlKey: true, bubbles: true, cancelable: true }));
+  editor.dispatchEvent(new f.w.KeyboardEvent('keydown', { key: 'q', ctrlKey: true, bubbles: true, cancelable: true }));
   assert.equal(f.engine.state.items[0].text, 'first\nsecond');
   assert.equal(f.engine.state.paused, false);
   assert.equal(f.adapter.editor(), editor); assert.equal(editor.value, ''); f.close();
@@ -223,7 +249,7 @@ test('busy Enter enqueues while Shift Enter and IME Enter retain native behavior
   const f = nativeQueueFixture(), editor = f.adapter.editor();
   f.w.document.addEventListener('keydown', e => f.enqueueShortcut(e, editor, () => f.input.capture(), true), true);
   editor.value = 'follow up';
-  for (const options of [{ shiftKey: true }, { isComposing: true }, { altKey: true }]) {
+  for (const options of [{ shiftKey: true }, { isComposing: true }, { altKey: true }, { ctrlKey: true }, { metaKey: true }]) {
     assert.equal(editor.dispatchEvent(new f.w.KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true, ...options })), true);
     assert.equal(f.engine.state.items.length, 0);
   }

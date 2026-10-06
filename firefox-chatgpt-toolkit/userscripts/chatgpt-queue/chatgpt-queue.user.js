@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Queue · Accent
 // @namespace    local.chatgpt-queue-accent
-// @version      1.6.1
+// @version      1.6.2
 // @description  ChatGPT 消息队列与会话全宽：逐条发送、编辑排序、暂停恢复，跟随当前 Accent color。
 // @match        https://chatgpt.com/*
 // @run-at       document-idle
@@ -494,7 +494,9 @@ class NativeQueueInput {
 }
 
 function enqueueShortcut(event, editor, capture, queueOnEnter = false) {
-  if (!(event.ctrlKey || event.metaKey || queueOnEnter) || event.key !== 'Enter' || event.shiftKey || event.altKey || event.isComposing || !editor || !(event.target === editor || editor.contains(event.target))) return;
+  const enqueue = event.ctrlKey && !event.metaKey && event.key.toLowerCase() === 'q';
+  const queuedEnter = queueOnEnter && event.key === 'Enter' && !event.ctrlKey && !event.metaKey;
+  if (!(enqueue || queuedEnter) || event.shiftKey || event.altKey || event.isComposing || !editor || !(event.target === editor || editor.contains(event.target))) return;
   event.preventDefault(); event.stopImmediatePropagation(); capture();
 }
 
@@ -505,7 +507,7 @@ class QueuePanel {
     this.root = this.host.attachShadow({ mode: 'open' });
     const style = document.createElement('style'); style.textContent = QUEUE_CSS; this.root.append(style);
     const section = document.createElement('section'); section.setAttribute('aria-label', '消息队列');
-    section.innerHTML = `<div class="error" role="alert" hidden></div><div class="list"></div><div class="footer"><span class="hint">Ctrl + Enter  Enqueue</span><div class="actions"></div></div>`;
+    section.innerHTML = `<div class="error" role="alert" hidden></div><div class="list"></div><div class="footer"><span class="hint">Ctrl + Q  Enqueue</span><div class="actions"></div></div>`;
     this.root.append(section);
     this.faultCard = new NoticeCard({ actions: [
       { label: '复制诊断', accent: true, action: () => actions.diagnostics?.() },
@@ -663,7 +665,7 @@ async function bootQueue() {
     remove: id => act(() => engine.remove(id)), move: (id, delta) => act(() => engine.move(id, delta)),
     diagnostics: () => {
       try {
-        GM_setClipboard(JSON.stringify({ ...engine.diagnostics(), scriptVersion: '1.6.1', owner }, null, 2), 'text');
+        GM_setClipboard(JSON.stringify({ ...engine.diagnostics(), scriptVersion: '1.6.2', owner }, null, 2), 'text');
         panel.faultCard.buttons[0].textContent = '诊断已复制';
       } catch (error) {
         panel.faultCard.setMessage(`复制诊断失败（${engine.state.fault?.code || 'Q_DIAGNOSTIC_COPY_FAILED'}）。`);
@@ -752,7 +754,7 @@ async function bootQueue() {
   }, true);
   document.addEventListener('keydown', event => {
     if (event.key === 'Escape' && owner && !engine.state.paused) act(() => engine.pause('已暂停队列。'));
-    if (owner && event.key === 'Enter') enqueueShortcut(event, adapter.editor(), () => panel.actions.capture(), Boolean(input.editingId || engine.state.items.length || adapter.snapshot().busy));
+      if (owner && (event.key === 'Enter' || event.key.toLowerCase() === 'q')) enqueueShortcut(event, adapter.editor(), () => panel.actions.capture(), Boolean(input.editingId || engine.state.items.length || adapter.snapshot().busy));
   }, true);
   window.addEventListener('pagehide', () => {
     clearInterval(interval);
