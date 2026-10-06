@@ -243,6 +243,21 @@ test('native enqueue automatically waits for an answer and then dispatches witho
   assert.deepEqual(sent, ['automatic']); f.close();
 });
 
+test('last accepted prompt hides the queue immediately while its answer remains busy', async () => {
+  const f = nativeQueueFixture(); let clock = 0, busy = false, userKey = 'initial';
+  const snapshot = f.adapter.snapshot.bind(f.adapter);
+  f.adapter.snapshot = () => ({ ...snapshot(), busy, complete: !busy, userKey });
+  f.adapter.send = async (_text, _before, _valid, click) => { click(); busy = true; return userKey = 'accepted'; };
+  f.engine.now = () => clock;
+  f.engine.add('A'); f.engine.resume();
+  const panel = new f.Panel({}); panel.render(f.engine, true);
+  assert.equal(panel.list.hidden, false);
+  await f.engine.tick(); clock = 1200; await f.engine.tick(); panel.render(f.engine, true);
+  assert.equal(busy, true); assert.equal(panel.root.querySelectorAll('.row').length, 0);
+  assert.equal(panel.list.hidden, true); assert.equal(panel.root.querySelector('.hint').hidden, false);
+  assert.equal(f.engine.state.active.text, 'A'); f.close();
+});
+
 test('empty native shortcut continues a paused queue and the panel has no run button', () => {
   const f = nativeQueueFixture(); f.engine.add('pending');
   f.input.capture(); assert.equal(f.engine.state.paused, false);

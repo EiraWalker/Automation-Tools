@@ -116,11 +116,43 @@ test('a storage failure prevents dispatch', async () => {
   f.engine.save = () => { throw new Error('storage full'); };
   await assert.rejects(f.tick(1200)); assert.equal(f.sent.length, 0); assert.equal(f.engine.state.paused, true);
 });
-test('active item cannot be edited, deleted, or reordered', async () => {
-  const f = fixture(); const a = f.engine.add('A'), b = f.engine.add('B');
-  f.engine.resume(); await f.tick(); await f.tick(1200);
+test('an item awaiting acknowledgement cannot be edited, deleted, or reordered', async () => {
+  const f = fixture(); const a = f.engine.add('A'), b = f.engine.add('B'); let release;
+  f.adapter.send = async (_text, _before, _valid, click) => { click(); await new Promise(resolve => { release = resolve; }); return 'u1'; };
+  f.engine.resume(); await f.tick(); const sending = f.tick(1200);
   assert.throws(() => f.engine.edit(a.id, 'changed')); assert.throws(() => f.engine.remove(a.id));
   f.engine.move(b.id, -1); assert.equal(f.engine.state.items[0].id, a.id);
+  release(); await sending;
+});
+
+test('accepted prompt leaves the queue while its answer is still running and blocks the next send', async () => {
+  const f = fixture(); f.engine.add('A'); const b = f.engine.add('B');
+  f.engine.resume(); await f.tick(); await f.tick(1200);
+  assert.equal(f.snapshot.busy, true);
+  assert.deepEqual(f.engine.state.items.map(item => item.id), [b.id]);
+  assert.equal(f.engine.state.active.text, 'A');
+  assert.equal(f.persisted().items.length, 1);
+  assert.equal(f.persisted().active.phase, 'waiting');
+  await f.tick(20000); assert.deepEqual(f.sent, ['A']);
+});
+
+test('pending prompts can be reordered while a popped prompt runs', async () => {
+  const f = fixture(); f.engine.add('A'); const b = f.engine.add('B'), c = f.engine.add('C');
+  f.engine.resume(); await f.tick(); await f.tick(1200);
+  f.engine.move(c.id, -1);
+  assert.deepEqual(f.engine.state.items.map(item => item.id), [c.id, b.id]);
+  assert.equal(f.engine.state.active.text, 'A');
+});
+
+test('reload of a popped final prompt preserves its running turn with an empty queue', async () => {
+  const f = fixture({ ...emptyState(), active: { id: 'a', text: 'A', phase: 'waiting', userKey: 'u0' } });
+  f.snapshot.busy = true; f.snapshot.complete = false;
+  await f.tick(); assert.equal(f.engine.state.fault, null); assert.equal(f.engine.state.items.length, 0);
+  f.engine.resume(); await f.tick(20000); assert.equal(f.engine.state.active.text, 'A');
+  f.snapshot.busy = false; f.snapshot.complete = true;
+  await f.tick(); await f.tick(1200);
+  assert.equal(f.engine.state.active, null); assert.equal(f.engine.state.paused, true);
+  assert.equal(f.sent.length, 0);
 });
 test('page errors pause and preserve the pending queue', async () => {
   const f = fixture(); f.engine.add('A'); f.engine.resume(); f.snapshot.error = 'rate limit'; await f.tick();
@@ -133,6 +165,8 @@ test('reload of an acknowledged message reconciles automatically without asking 
   await f.tick();
   assert.equal(f.engine.recovery, false);
   assert.equal(f.engine.state.fault ?? null, null);
+  assert.equal(f.engine.state.items.length, 0);
+  assert.equal(f.engine.state.active.text, 'A');
   assert.doesNotThrow(() => f.engine.resume());
   await f.tick(); await f.tick(1200);
   assert.equal(f.engine.state.items.length, 0);

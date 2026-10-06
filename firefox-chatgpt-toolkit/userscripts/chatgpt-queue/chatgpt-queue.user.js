@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Queue · Accent
 // @namespace    local.chatgpt-queue-accent
-// @version      1.6.0
+// @version      1.6.1
 // @description  ChatGPT 消息队列与会话全宽：逐条发送、编辑排序、暂停恢复，跟随当前 Accent color。
 // @match        https://chatgpt.com/*
 // @run-at       document-idle
@@ -96,7 +96,8 @@ class QueueEngine {
     const index = this.state.items.findIndex(item => item.id === id);
     const target = index + delta;
     if (index < 0 || target < 0 || target >= this.state.items.length) return;
-    if (this.state.active && (index === 0 || target === 0)) return;
+    const activeIndex = this.state.items.findIndex(item => item.id === this.state.active?.id);
+    if (activeIndex >= 0 && (index === activeIndex || target === activeIndex)) return;
     [this.state.items[index], this.state.items[target]] = [this.state.items[target], this.state.items[index]];
     this.commit();
   }
@@ -104,7 +105,7 @@ class QueueEngine {
   resume() {
     if (this.needsReconcile) this.reconcile();
     if (this.state.fault || this.needsReconcile) throw new Error(this.state.fault ? `队列错误：${this.state.fault.code}` : '正在读取页面消息记录。');
-    if (!this.state.items.length) return;
+    if (!this.state.items.length && !this.state.active) return;
     const snapshot = this.adapter.snapshot();
     if (snapshot.error) throw new Error(snapshot.error);
     this.expectedUser = this.state.active?.userKey || snapshot.userKey;
@@ -144,6 +145,18 @@ class QueueEngine {
     if (previous !== code) this.onError(structuredClone(this.state.fault));
   }
 
+  acknowledge(userKey) {
+    const active = this.state.active;
+    const item = this.state.items.find(item => item.id === active.id);
+    // The queue contains only unsent prompts. Retain the accepted turn separately
+    // so completion, reload and error handling never resend it.
+    this.state.active = { ...item, ...active, phase: 'waiting', userKey };
+    this.state.items = this.state.items.filter(item => item.id !== active.id);
+    this.expectedUser = userKey;
+    this.stableSince = null;
+    this.status = '等待本条回答结束';
+  }
+
   reconcile(snapshot = this.adapter.snapshot()) {
     const active = this.state.active;
     if (!active || this.running || this.disposed) return;
@@ -153,13 +166,13 @@ class QueueEngine {
     }
     if (snapshot.error) { this.fail('Q_PAGE_ERROR', 'restore', snapshot); return; }
     if (!snapshot.ready) return;
-    const item = this.state.items.find(item => item.id === active.id);
-    if (!item) { this.fail('Q_STATE_INVALID', 'restore', snapshot); return; }
-    const receipt = this.adapter.receipt ? this.adapter.receipt(active, item.text) :
+    const text = active.text ?? this.state.items.find(item => item.id === active.id)?.text;
+    if (typeof text !== 'string') { this.fail('Q_STATE_INVALID', 'restore', snapshot); return; }
+    const receipt = this.adapter.receipt ? this.adapter.receipt(active, text) :
       { status: active.phase === 'waiting' && snapshot.userKey === active.userKey ? 'accepted' : 'pending', userKey: snapshot.userKey };
     if (receipt.status === 'accepted') {
-      this.state.active = { ...active, phase: 'waiting', userKey: receipt.userKey };
-      this.expectedUser = receipt.userKey; this.state.fault = null; this.state.reason = '';
+      this.acknowledge(receipt.userKey);
+      this.state.fault = null; this.state.reason = '';
       this.needsReconcile = false; this.reconcileSince = null; this.commit(); return;
     }
     if (receipt.status === 'changed') { this.fail('Q_CONTEXT_CHANGED', 'restore', snapshot); return; }
@@ -188,7 +201,7 @@ class QueueEngine {
   async tick() {
     if (this.running || this.disposed) return;
     if (this.needsReconcile) { this.reconcile(); return; }
-    if (this.state.paused || !this.state.items.length) return;
+    if (this.state.paused || (!this.state.items.length && !this.state.active)) return;
     this.running = true;
     try {
       const snapshot = this.adapter.snapshot();
@@ -202,8 +215,7 @@ class QueueEngine {
           return;
         }
         if (this.settled(snapshot)) {
-          this.state.items = this.state.items.filter(item => item.id !== active.id);
-          this.state.active = null;
+            this.state.active = null;
           this.stableSince = null;
           this.status = this.state.items.length ? '准备下一条' : '队列已完成';
           if (!this.state.items.length) this.state.paused = true;
@@ -229,10 +241,7 @@ class QueueEngine {
           this.state.active.phase = 'submitting';
           this.commit();
         });
-          this.state.active = { ...this.state.active, phase: 'waiting', userKey };
-        this.expectedUser = userKey;
-        this.stableSince = null;
-        this.status = '等待本条回答结束';
+        this.acknowledge(userKey);
         this.commit();
       } catch (error) {
           if (this.state.active?.phase === 'preparing') {
@@ -451,7 +460,7 @@ class NativeQueueInput {
     if (this.adapter.snapshot().attachments) throw new Error('请先处理原生输入框中的附件。');
     const text = normalize(this.adapter.text());
     if (!text) {
-      if (!this.editingId && this.engine.state.items.length) { this.engine.resume(); return; }
+      if (!this.editingId && (this.engine.state.items.length || this.engine.state.active)) { this.engine.resume(); return; }
       return;
     }
     const previous = this.editingId && this.engine.state.items.find(item => item.id === this.editingId);
@@ -546,7 +555,7 @@ class QueuePanel {
       row.querySelector('.message').textContent = item.text;
       const controls = row.querySelectorAll('button');
       controls[0].disabled = !owner || active || Boolean(editingId && editingId !== item.id);
-      controls[1].disabled = !owner || active || index === 0 || (Boolean(state.active) && index === 1);
+      controls[1].disabled = !owner || active || index === 0 || (state.active?.id === state.items[0]?.id && index === 1);
       controls[2].disabled = !owner || active || index === state.items.length - 1;
       controls[3].disabled = !owner || active || item.id === editingId;
       if (this.list.children[index] !== row) this.list.insertBefore(row, this.list.children[index] || null);
@@ -654,7 +663,7 @@ async function bootQueue() {
     remove: id => act(() => engine.remove(id)), move: (id, delta) => act(() => engine.move(id, delta)),
     diagnostics: () => {
       try {
-        GM_setClipboard(JSON.stringify({ ...engine.diagnostics(), scriptVersion: '1.6.0', owner }, null, 2), 'text');
+        GM_setClipboard(JSON.stringify({ ...engine.diagnostics(), scriptVersion: '1.6.1', owner }, null, 2), 'text');
         panel.faultCard.buttons[0].textContent = '诊断已复制';
       } catch (error) {
         panel.faultCard.setMessage(`复制诊断失败（${engine.state.fault?.code || 'Q_DIAGNOSTIC_COPY_FAILED'}）。`);

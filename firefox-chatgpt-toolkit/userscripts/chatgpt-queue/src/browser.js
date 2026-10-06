@@ -176,7 +176,7 @@ class NativeQueueInput {
     if (this.adapter.snapshot().attachments) throw new Error('请先处理原生输入框中的附件。');
     const text = normalize(this.adapter.text());
     if (!text) {
-      if (!this.editingId && this.engine.state.items.length) { this.engine.resume(); return; }
+      if (!this.editingId && (this.engine.state.items.length || this.engine.state.active)) { this.engine.resume(); return; }
       return;
     }
     const previous = this.editingId && this.engine.state.items.find(item => item.id === this.editingId);
@@ -271,7 +271,7 @@ class QueuePanel {
       row.querySelector('.message').textContent = item.text;
       const controls = row.querySelectorAll('button');
       controls[0].disabled = !owner || active || Boolean(editingId && editingId !== item.id);
-      controls[1].disabled = !owner || active || index === 0 || (Boolean(state.active) && index === 1);
+      controls[1].disabled = !owner || active || index === 0 || (state.active?.id === state.items[0]?.id && index === 1);
       controls[2].disabled = !owner || active || index === state.items.length - 1;
       controls[3].disabled = !owner || active || item.id === editingId;
       if (this.list.children[index] !== row) this.list.insertBefore(row, this.list.children[index] || null);
@@ -379,7 +379,7 @@ async function bootQueue() {
     remove: id => act(() => engine.remove(id)), move: (id, delta) => act(() => engine.move(id, delta)),
     diagnostics: () => {
       try {
-        GM_setClipboard(JSON.stringify({ ...engine.diagnostics(), scriptVersion: '1.6.0', owner }, null, 2), 'text');
+        GM_setClipboard(JSON.stringify({ ...engine.diagnostics(), scriptVersion: '1.6.1', owner }, null, 2), 'text');
         panel.faultCard.buttons[0].textContent = '诊断已复制';
       } catch (error) {
         panel.faultCard.setMessage(`复制诊断失败（${engine.state.fault?.code || 'Q_DIAGNOSTIC_COPY_FAILED'}）。`);

@@ -7,7 +7,7 @@ description: Install, use, maintain and validate the Tampermonkey ChatGPT Queue 
 
 Read [README.md](README.md) for installation and user behavior. Install the complete `chatgpt-queue.user.js` in Firefox Tampermonkey; no npm or MCP is needed for everyday use. Check the installed version, enabled flag, full-site `@match`, and User excludes. Refresh already-open ChatGPT tabs after installing/updating; a script enabled in the dashboard can still be excluded from the site.
 
-Use the native ChatGPT composer. Ctrl+Enter enqueues; Enter enqueues during generation or when queued items exist, while idle Enter stays native. There is no enqueue/run button or second message textarea. Queue rows display only when present; `Ctrl + Enter  Enqueue` stays visible. The userscript menu opens its settings; full width defaults on. The UI follows the actual site's background/text/font and effective Accent color.
+Use the native ChatGPT composer. Ctrl+Enter enqueues; Enter enqueues during generation or when queued items exist, while idle Enter stays native. There is no enqueue/run button or second message textarea. Queue rows contain only unsent prompts: pop on confirmed receipt/start, keep the accepted turn separately until its answer completes, then dispatch the next prompt. The last prompt hides the list at start; `Ctrl + Enter  Enqueue` stays visible. The userscript menu opens its settings; full width defaults on. The UI follows the actual site's background/text/font and effective Accent color.
 
 For changes, use Node.js 22.13+, `npm ci --ignore-scripts`, `npm test`, `npm run build`, and `npm run check`. Source locations: `src/core.cjs` for queue state/persistence, `src/browser.js` for page adapter/UI/locking, `src/queue.css` for styling, and `src/notice-card.js` for the reusable rounded notice card with accent/neutral actions. Keep the generated script synchronized with source and preserve GPL/source attribution.
 
@@ -18,3 +18,5 @@ Before automatic-send testing, inspect busy state and native composer, then use 
 Read [VALIDATION.md](VALIDATION.md) for established runtime evidence and limits. Private chat URLs, screenshots and stored queue text are local evidence and are not part of the published source.
 
 When editing click interception, require an actual native send button target. A shadow control retargets to the host, so its nearest button can be null; comparing that null with an absent send button can swallow every queue action. Keep the full installed-script regression test, in addition to isolated component tests.
+
+Accepted running turns persist in `state.active` with their text for receipt checks; they are absent from `state.items`. Do not use an empty queue as proof that the current answer has completed. Keep reload reconciliation compatible with old states whose accepted item is still in `items`, and allow pending items to reorder around a separately running turn.

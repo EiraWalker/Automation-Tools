@@ -1,0 +1,35 @@
+{
+  "version": "1.6.1",
+  "date": "2026-10-06",
+  "sourceSha256": "1f7f6cbc2542a48c2cb744c9479d8f52191891c56542937df676951f8ca8d9d0",
+  "unitTests": 50,
+  "realFirefox": true,
+  "installedVerified": true,
+  "runtimeSamples": [
+    {
+      "prompt": 1,
+      "remainingRows": 1,
+      "busy": true
+    },
+    {
+      "prompt": 2,
+      "remainingRows": 0,
+      "busy": true
+    }
+  ],
+  "responsesCompleted": 2,
+  "finalState": {
+    "queueLength": 0,
+    "active": null,
+    "fault": null,
+    "paused": true
+  },
+  "draftRestored": true,
+  "consoleInputRestored": true,
+  "backgroundCapture": {
+    "method": "wgc",
+    "foregroundPreserved": true,
+    "imageInspected": true,
+    "capturedDuringGeneration": false
+  }
+}
