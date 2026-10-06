@@ -43,7 +43,7 @@ export function page(bundle, epic) {
   <p class="notice">浏览器的 Epic Cookie 保存在 Epic 域名下，本站无法直接读取。本站会复用服务器加密保存的令牌及官方 SSO 网站会话；你浏览器的 Cookie 用于简化官网重新授权。若提示授权码无效、过期或已使用，请重新打开官方链接获取新代码。</p>
   <form id="epic-connect"><label for="epic-code">Epic 一次性授权代码</label><input id="epic-code" type="password" autocomplete="off" maxlength="2000" required spellcheck="false"><button type="submit">重新授权并开始领取</button></form>
   <h3>复用 Epic 网站 Cookie</h3><p>与 BundleFoundry 使用相同的本地会话导入方式。已有授权有效时，导入只补充网站 Cookie，不再兑换授权码。</p>
-  <p>服务器网站 Cookie：${epic?.website_session_saved?'已加密保存；有效性以实际结账核验为准':'尚未保存有效期内的 Cookie，需要导入本地会话'}。</p>
+  <p>服务器网站 Cookie：${epic?.website_session_verified?'已加密保存并核对账号':epic?.website_session_saved?'已保存，尚需核验登录状态':'尚未保存有效期内的登录 Cookie，需要导入本地会话'}。</p>
   <ol><li>安装 Python 3 和 Chrome，<a href="/epic-authorization/export.py">下载本地 Epic 会话脚本</a>。</li><li>运行 <code>python -m pip install playwright</code>，再运行 <code>python epic-local-auth.py</code>。在本地官方页面完成登录或验证。如已有专用 Chrome 调试会话，可用 <code>--cdp http://127.0.0.1:9222</code> 复用它。</li><li>立即上传生成的 <code>epic-session-import.json</code>。本站核对 Cookie 对应账号并加密保存，随后尝试领取；成功后删除电脑上的文件。</li></ol>
   <p class="notice">导出的 JSON 含登录 Cookie，只上传到本私有页面，不要发送到聊天或仓库。Cookie 保留 Epic 签发的实际有效期，过期时才需要补充会话。</p>
   <form id="epic-import"><label for="epic-file">本地 Epic 会话文件</label><input id="epic-file" type="file" accept="application/json,.json" required><button type="submit">加密保存 Cookie 并领取</button></form>

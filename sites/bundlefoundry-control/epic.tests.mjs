@@ -102,6 +102,7 @@ test('private Cookie import reuses existing authorization, verifies owner and se
   const cookie={name:'EPIC_BEARER_TOKEN',value:'TEST_WEB_TOKEN',domain:'epicgames.com',path:'/',subdomains:true,expires:Date.now()+3600000};
   const previous=await f.service.load();previous.pending={'old-order':{game,submitted_at:'test'}};await f.service.save(previous);
   const view=await f.service.importCookies({version:1,cookies:[cookie],authorizationCode:'expired-unused-code'});
+  assert.equal(view.website_session_verified,true);
   assert.equal(view.connected,true);assert.ok(!JSON.stringify(view).includes(cookie.value));
   assert.ok(!JSON.stringify(f.repo).includes(cookie.value));
   assert.equal((await f.service.load()).web_cookies[0].value,cookie.value);

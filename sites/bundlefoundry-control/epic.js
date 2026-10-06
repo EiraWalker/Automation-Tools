@@ -316,7 +316,8 @@ export function summary(state,targets=[]) {
     last_success_at:state.last_success_at || null, refreshed_at:state.refreshed_at || null,
     failure_stage:state.failure_stage || null,
     failure_detail:state.failure_detail || null,
-    website_session_saved:Boolean(state.web_cookies?.some(c=>c.expires>Date.now())),
+    website_session_saved:Boolean(state.web_cookies?.some(c=>['EPIC_BEARER_TOKEN','EPIC_SSO_RM','EPIC_SESSION_AP','EPIC_SSO'].includes(c.name) && c.expires>Date.now())),
+    website_session_verified:state.website_session_account_verified===true && Boolean(state.web_cookies?.some(c=>c.name==='EPIC_BEARER_TOKEN' && c.expires>Date.now())),
     refresh_expires_at:state.session.refresh_expires_at,
     refresh_interval_warning:Date.parse(state.session.refresh_expires_at)-Date.now()<13*3600000,
     games:state.games || [], results:Object.values(state.results || {}).slice(-100),
@@ -364,7 +365,7 @@ export class EpicService {
     const account=await this.api.profile(session);
     if(verified.account_id!==account.id)throw new EpicError('account_mismatch');
     const state=previous || {results:{},pending:{}};
-    Object.assign(state,{account,session,web_cookies:this.api.cookies,status:'ready',failure_stage:null,failure_detail:null,refreshed_at:new Date().toISOString()});
+    Object.assign(state,{account,session,web_cookies:this.api.cookies,website_session_account_verified:true,status:'ready',failure_stage:null,failure_detail:null,refreshed_at:new Date().toISOString()});
     await this.save(state);return this.view(state);
   }
   async renew(state) {
@@ -446,6 +447,7 @@ export class EpicService {
         const checkout = await this.api.preview(session,game);
         if(this.api.cookies)state.web_cookies=this.api.cookies;
         assertFreeOrder(checkout.preview,game,state.account.id);
+        if(this.api.cookies?.length)state.website_session_account_verified=true;
         state.pending[key] = {game,submitted_at:new Date().toISOString(),free_order_verified:true};
         await this.save(state); // Durable journal BEFORE the mutating request.
         stage='checkout_confirm';
