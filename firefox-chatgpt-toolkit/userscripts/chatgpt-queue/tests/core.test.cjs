@@ -55,22 +55,46 @@ test('identical messages have different identities and both send', async () => {
   await f.tick(); await f.tick(1200); await f.tick(); await f.tick(1200);
   assert.deepEqual(f.sent, ['same', 'same']);
 });
-test('unknown click result pauses and keeps the item until explicit resolution', async () => {
+test('post-click failure preserves the item and refuses automatic retry', async () => {
   const f = fixture(); f.adapter.send = async (_text, _before, _valid, click) => { click(); throw new Error('unknown'); };
   f.engine.add('A'); f.engine.resume(); await f.tick(); await f.tick(1200);
-  assert.equal(f.engine.recovery, true); assert.equal(f.engine.state.items.length, 1);
+  assert.equal(f.engine.state.fault.code, 'Q_SEND_FAILED'); assert.equal(f.engine.state.items.length, 1);
   assert.throws(() => f.engine.resume()); await f.tick(10000);
-  f.engine.resolve(true); assert.equal(f.engine.state.items.length, 0);
+  assert.equal(f.engine.state.items.length, 1);
 });
 test('pre-click failure retains item without pretending a request was sent', async () => {
   const f = fixture(); f.adapter.send = async () => { throw new Error('editor unavailable'); };
   f.engine.add('A'); f.engine.resume(); await f.tick(); await f.tick(1200);
   assert.equal(f.engine.recovery, false); assert.equal(f.engine.state.active, null); assert.equal(f.engine.state.items.length, 1);
 });
-test('reload does not automatically retry an in-flight message', () => {
+test('reload does not retry an in-flight message and reports missing receipt after hydration deadline', async () => {
   const saved = { ...emptyState(), paused: false, items: [{ id: 'a', text: 'A' }], active: { id: 'a', phase: 'submitting' } };
-  const f = fixture(saved); assert.equal(f.engine.state.paused, true); assert.equal(f.engine.recovery, true);
-  assert.throws(() => f.engine.resume()); f.engine.resolve(false); assert.equal(f.engine.state.items.length, 1);
+  const f = fixture(saved); assert.equal(f.engine.state.paused, true); assert.equal(f.engine.recovery, false);
+  await f.tick(); await f.tick(12000);
+  assert.equal(f.engine.state.fault.code, 'Q_RECEIPT_MISSING');
+  assert.throws(() => f.engine.resume()); assert.equal(f.engine.state.items.length, 1); assert.equal(f.sent.length, 0);
+});
+
+test('reload before the click clears preparation without a false error', async () => {
+  const f=fixture({...emptyState(),items:[{id:'a',text:'A'}],active:{id:'a',phase:'preparing'}});
+  await f.tick();assert.equal(f.engine.state.active,null);assert.equal(f.engine.state.fault,null);assert.equal(f.sent.length,0);
+});
+
+test('late receipt clears a send error without duplicating a message', async () => {
+  const f=fixture();let accepted=false;
+  f.adapter.receipt=()=>accepted?{status:'accepted',userKey:'u1'}:{status:'pending'};
+  f.adapter.send=async (_text,_before,_valid,click)=>{click();throw Object.assign(new Error('timeout'),{code:'Q_ACK_TIMEOUT'});};
+  f.engine.add('A');f.engine.resume();await f.tick();await f.tick(1200);
+  accepted=true;await f.tick(15000);
+  assert.equal(f.engine.state.fault,null);assert.equal(f.engine.state.active.phase,'waiting');assert.equal(f.engine.state.active.userKey,'u1');
+  assert.equal(f.sent.length,0);assert.equal(f.engine.state.paused,true);
+});
+
+test('diagnostics contain signals but no message, conversation or draft text', async () => {
+  const f=fixture();f.engine.add('private message');f.snapshot.draft='private draft';
+  f.engine.fail('Q_TEST','test');const diagnostic=JSON.stringify(f.engine.diagnostics());
+  assert.ok(!diagnostic.includes('private message'));assert.ok(!diagnostic.includes('private draft'));
+  assert.equal(f.engine.diagnostics().signals.draftLength,13);
 });
 test('external message or branch change pauses before dispatch', async () => {
   const f = fixture(); f.engine.add('A'); f.engine.resume(); await f.tick();
@@ -100,5 +124,29 @@ test('active item cannot be edited, deleted, or reordered', async () => {
 });
 test('page errors pause and preserve the pending queue', async () => {
   const f = fixture(); f.engine.add('A'); f.engine.resume(); f.snapshot.error = 'rate limit'; await f.tick();
-  assert.equal(f.engine.state.reason, 'rate limit'); assert.equal(f.sent.length, 0);
+  assert.equal(f.engine.state.fault.code, 'Q_PAGE_ERROR'); assert.equal(f.sent.length, 0);
+});
+
+test('reload of an acknowledged message reconciles automatically without asking sent or unsent', async () => {
+  const saved = { ...emptyState(), items: [{ id: 'a', text: 'A' }], active: { id: 'a', phase: 'waiting', userKey: 'u0' } };
+  const f = fixture(saved);
+  await f.tick();
+  assert.equal(f.engine.recovery, false);
+  assert.equal(f.engine.state.fault ?? null, null);
+  assert.doesNotThrow(() => f.engine.resume());
+  await f.tick(); await f.tick(1200);
+  assert.equal(f.engine.state.items.length, 0);
+  assert.equal(f.sent.length, 0);
+});
+
+test('an unconfirmed post-click result is a coded error with diagnostic callback, never manual recovery', async () => {
+  const f = fixture(); const faults = []; f.engine.onError = fault => faults.push(fault);
+  f.adapter.send = async (_text, _before, _valid, click) => { click(); throw Object.assign(new Error('ack timeout'), { code: 'Q_ACK_TIMEOUT' }); };
+  f.engine.add('A'); f.engine.resume(); await f.tick(); await f.tick(1200);
+  assert.equal(f.engine.recovery, false);
+  assert.equal(f.engine.state.fault.code, 'Q_ACK_TIMEOUT');
+  assert.equal(faults.length, 1);
+  assert.equal(f.engine.state.paused, true);
+  assert.equal(f.engine.state.items.length, 1);
+  assert.equal(typeof f.engine.resolve, 'undefined');
 });

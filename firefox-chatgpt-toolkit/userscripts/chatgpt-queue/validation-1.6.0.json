@@ -1,0 +1,33 @@
+{
+  "version": "1.6.0",
+  "date": "2026-10-06",
+  "sourceSha256": "931ef9ca053a52e94cbb415ae6a95875f03007e35a3387d62c0fd97cd6126dad",
+  "unitTests": 46,
+  "installedVerified": true,
+  "installedEnabled": true,
+  "realFirefox": true,
+  "queueRecovery": {
+    "originalQueuedItems": 4,
+    "knownAcceptedItemResent": false,
+    "newDistinctUserTurns": 3,
+    "finalItems": 0,
+    "finalActive": null,
+    "finalFault": null
+  },
+  "controlledErrorTest": {
+    "code": "Q_PAGE_ERROR",
+    "automaticSendStopped": true,
+    "testItemSent": false,
+    "copyDiagnosticVerified": true,
+    "diagnosticIncludesMessageText": false,
+    "recheckClearedFault": true,
+    "testItemRemoved": true
+  },
+  "backgroundCapture": {
+    "method": "wgc",
+    "foregroundPreserved": true,
+    "imageInspected": true
+  },
+  "temporaryEditorClosed": true,
+  "consoleClosed": true
+}

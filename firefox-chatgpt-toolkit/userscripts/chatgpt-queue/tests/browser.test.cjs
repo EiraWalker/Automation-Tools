@@ -11,6 +11,7 @@ function fixture(html) {
   const w = dom.window;
   w.module = { exports: {} }; w.process = {}; w.normalize = core.normalize; w.emptyState = core.emptyState;
   w.QUEUE_CSS = fs.readFileSync(path.join(__dirname, '../src/queue.css'), 'utf8');
+  w.eval(fs.readFileSync(path.join(__dirname, '../src/notice-card.js'), 'utf8') + '\nwindow.NoticeCard = NoticeCard;');
   w.HTMLElement.prototype.getClientRects = function () { return this.hidden ? [] : [{ width: 10 }]; };
   Object.defineProperty(w.HTMLElement.prototype, 'innerText', { get() { return this.textContent; } });
   w.eval(fs.readFileSync(path.join(__dirname, '../src/browser.js'), 'utf8'));
@@ -26,6 +27,33 @@ const MODERN = `<aside style="width:320px">sidebar</aside><main><div data-reques
 <div class="turn-action-controls"><button aria-label="Copy"></button><button aria-label="Regenerate response"></button></div>
 </div></div><div class="max-w-(--thread-body-max-width)" style="--thread-content-max-width:48rem"><form data-chatgpt-composer><div class="ProseMirror" contenteditable="true" role="textbox"></div><button type="button" aria-label="Send"></button></form></div>
 </div></main>`;
+
+test('installed click handler allows shadow queue controls when the native send button is absent', async t => {
+  const f = fixture(MODERN), w = f.w;
+  t.after(() => f.close());
+  f.adapter.sendButton().remove();
+  let copies = 0;
+  const saved = { ...core.emptyState(), items: [{ id: 'pending', text: 'preserved queue' }],
+    fault: { code: 'Q_PAGE_ERROR', stage: 'page', at: 0 } };
+  w.module = undefined; w.process = undefined; w.structuredClone = structuredClone;
+  w.GM_getValue = (_key, fallback) => fallback === null ? saved : fallback;
+  w.GM_setValue = () => {}; w.GM_setClipboard = () => copies++;
+  w.GM_registerMenuCommand = () => {}; w.GM_addValueChangeListener = () => 0; w.GM_removeValueChangeListener = () => {};
+  Object.defineProperty(w.navigator, 'locks', { value: { request: (_name, _options, callback) => {
+    callback({}); return new w.Promise(() => {});
+  } } });
+  w.eval(fs.readFileSync(path.join(__dirname, '../chatgpt-queue.user.js'), 'utf8'));
+  await new Promise(resolve => setImmediate(resolve));
+  const host = w.document.getElementById('chatgpt-queue-accent'), card = host.shadowRoot.querySelector('.notice-card');
+  assert.equal(host.dataset.cqOwner, 'true');
+  card.querySelectorAll('button')[0].click();
+  assert.equal(copies, 1);
+  assert.equal(card.querySelectorAll('button')[0].textContent, '诊断已复制');
+  card.querySelectorAll('button')[1].click();
+  assert.equal(card.hidden, true);
+  assert.equal(host.shadowRoot.querySelectorAll('.row').length, 1);
+  f.close();
+});
 test('current completed turn is recognized, a new unanswered user turn is not', () => {
   const f = fixture(); assert.equal(f.adapter.snapshot().complete, true);
   const user = f.w.document.createElement('div'); user.dataset.messageAuthorRole = 'user'; user.textContent = 'new';
@@ -125,6 +153,35 @@ test('shortcut hint stays visible before enqueue and after clearing while empty 
   assert.equal(panel.host.hidden, false); assert.equal(panel.root.querySelector('.row'), null);
   assert.equal(panel.list.hidden, true); assert.equal(panel.queueActions.hidden, true);
   assert.equal(hint.closest('[hidden]'), null); f.close();
+});
+
+test('mixed legacy and modern message markup still identifies a newly sent modern message', () => {
+  const f = fixture();
+  const modern = f.w.document.createElement('div');
+  modern.setAttribute('data-content-search-unit-key', 'new-turn:0:user');
+  modern.innerHTML = '<div data-user-message-bubble><div data-search-result-target>next</div></div>';
+  f.w.document.querySelector('form').before(modern);
+  assert.equal(f.adapter.snapshot().userText, 'next');
+  assert.equal(f.adapter.messages('user').length, 2);
+  f.close();
+});
+
+test('fault card preserves rounded two-tone component and its actions never ask sent or unsent', () => {
+  const f=nativeQueueFixture();let copies=0,checks=0;
+  const panel=new f.Panel({diagnostics:()=>copies++,recheck:()=>checks++});f.engine.add('pending');f.engine.fail('Q_ACK_TIMEOUT','acknowledge');
+  panel.render(f.engine,true);assert.equal(panel.faultCard.element.hidden,false);assert.equal(panel.host.dataset.cqError,'Q_ACK_TIMEOUT');
+  assert.match(panel.faultCard.message.textContent,/Q_ACK_TIMEOUT/);assert.equal(panel.root.querySelector('.recovery'),null);
+  assert.equal([...panel.root.querySelectorAll('button')].some(el=>/已发送，移出|未发送，退回/.test(el.textContent)),false);
+  panel.faultCard.buttons[0].click();panel.faultCard.buttons[1].click();assert.equal(copies,1);assert.equal(checks,1);
+  panel.render(f.engine,false);assert.equal(panel.faultCard.buttons[0].disabled,false);assert.equal(panel.faultCard.buttons[1].disabled,true);
+  assert.match(f.w.QUEUE_CSS,/\.notice-card\s*\{[^}]*border-radius: 16px/);f.close();
+});
+
+test('receipt uses baseline to distinguish duplicate text and tolerates changed markup keys', () => {
+ const f=fixture();const user=f.w.document.createElement('div');user.dataset.messageAuthorRole='user';user.dataset.messageId='u1';user.textContent='start';f.w.document.querySelector('form').before(user);
+ assert.equal(f.adapter.receipt({phase:'submitting',beforeUserKey:'u0'},'start').status,'accepted');
+ assert.equal(f.adapter.receipt({phase:'waiting',beforeUserKey:'u0',userKey:'old-key'},'start').userKey,'u1');
+ assert.equal(f.adapter.receipt({phase:'submitting'},'start').status,'pending');f.close();
 });
 
 test('empty native enqueue has no validation text and leaves the composer untouched', () => {

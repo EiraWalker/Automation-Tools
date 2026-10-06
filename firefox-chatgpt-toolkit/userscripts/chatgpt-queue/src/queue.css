@@ -30,8 +30,8 @@ button:focus-visible { outline: 2px solid var(--cq-accent); outline-offset: 3px;
 .icons { display: flex; gap: 2px; }
 .footer { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 8px 3px 0; }
 .hint { color: var(--cq-muted); font-size: 11px; white-space: pre-wrap; }
-.recovery { border: 1px solid color-mix(in srgb, var(--cq-accent) 50%, transparent); border-radius: 16px; padding: 10px; margin: 6px 0; }
-.recovery p { margin: 0 0 8px; }
+.notice-card { border: 1px solid color-mix(in srgb, var(--cq-accent) 50%, transparent); border-radius: 16px; padding: 10px; margin: 6px 0; }
+.notice-card p { margin: 0 0 8px; overflow-wrap: anywhere; }
 [hidden] { display: none !important; }
 svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 @media (max-width: 560px) { .pill { padding: 6px 9px; } .row { gap: 5px; padding: 8px; } .hint { max-width: 160px; } }

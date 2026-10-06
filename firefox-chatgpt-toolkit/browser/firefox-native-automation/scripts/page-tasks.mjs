@@ -1,17 +1,23 @@
 // SPDX-License-Identifier: MIT
 import { randomUUID } from 'node:crypto';
 
-export function wrapPageTask({ title, url, sentinel = `CHECK_${randomUUID().replaceAll('-', '')}` }, body) {
+export function wrapPageTask({ title, url, sentinel = `CHECK_${randomUUID().replaceAll('-', '')}`, inline = false }, body) {
   if (!title || !url || !/^[A-Za-z][A-Za-z0-9_-]{2,79}$/.test(sentinel)) throw new Error('Exact title, URL and a short sentinel are required');
   const canonicalUrl = new URL(url).href;
-  return `(async () => {\nconst expected = ${JSON.stringify({ title, url: canonicalUrl, sentinel })};\ntry {\nif (document.title !== expected.title || location.href !== expected.url) throw new Error('Document changed; no page action performed');\nconst result = await (async () => {\n${body}\n})();\nconsole.log(expected.sentinel + ' ' + JSON.stringify({ok:true,...result}));\n} catch (error) { console.log(expected.sentinel + ' ' + JSON.stringify({ok:false,error:error.message})); }\n})();\n`;
+  if (inline) body = body.replace(/[\r\n]+$/, '');
+  if (inline && /[\r\n]/.test(body)) throw new Error('Inline payload must already be a single line; arbitrary code is not minified');
+  const task = `(async () => {\nconst expected = ${JSON.stringify({ title, url: canonicalUrl, sentinel })};\ntry {\nif (document.title !== expected.title || location.href !== expected.url) throw new Error('Document changed; no page action performed');\nconst result = await (async () => {\n${body}\n})();\nconsole.log(expected.sentinel + ' ' + JSON.stringify({ok:true,...result}));\n} catch (error) { console.log(expected.sentinel + ' ' + JSON.stringify({ok:false,error:error.message})); }\n})();\n`;
+  return inline ? task.split('\n').map(line => line.trim()).filter(Boolean).join(' ') : task;
 }
+
+// These bodies are fixed templates with all user data serialized or encoded.
+const templateBody = (body, inline) => inline ? body.split('\n').map(line => line.trim()).filter(Boolean).join(' ') : body;
 
 export function userscriptTask({ mode, source, namespace, saveId, ...guard }) {
   if (!['prepare', 'apply'].includes(mode) || !namespace || !source.startsWith('// ==UserScript==')) throw new Error('Userscript, namespace and prepare/apply mode are required');
   if (!saveId) throw new Error('Exact save control id is required');
-  return wrapPageTask(guard, `
-const desired = ${JSON.stringify(source)}, namespace = ${JSON.stringify(namespace)}, saveId = ${JSON.stringify(saveId)};
+  return wrapPageTask(guard, templateBody(`
+const desired = new TextDecoder().decode(Uint8Array.from(atob(${JSON.stringify(Buffer.from(source.replaceAll('\r\n', '\n'), 'utf8').toString('base64'))}), c => c.charCodeAt(0))), namespace = ${JSON.stringify(namespace)}, saveId = ${JSON.stringify(saveId)};
 const metadataNamespace = code => /^\\/\\/\\s*@namespace\\s+(.+)$/m.exec(code)?.[1].trim();
 if (metadataNamespace(desired) !== namespace) throw new Error('Source namespace differs');
 const editors = [...document.querySelectorAll('.CodeMirror')].map(node => node.CodeMirror).filter(cm => cm && metadataNamespace(cm.getValue()) === namespace);
@@ -29,12 +35,12 @@ return {action:'prepared',characters:desired.length,saveRequested:false};` : `
 if (cm.getValue() !== desired) throw new Error('Editor changed after preparation');
 save.click();
 return {action:'save_requested',installedVerified:false};`}
-`);
+`, guard.inline));
 }
 
 export function draftTask({ mode, selector = '#prompt-textarea', key = 'firefox-toolkit-draft-backup', busySelector, ...guard }) {
   if (!['backup', 'restore'].includes(mode)) throw new Error('Use backup or restore');
-  return wrapPageTask(guard, `
+  return wrapPageTask(guard, templateBody(`
 const selector = ${JSON.stringify(selector)}, key = ${JSON.stringify(key)}, busy = ${JSON.stringify(busySelector || '')};
 const editors = [...document.querySelectorAll(selector)].filter(el => !el.hidden && getComputedStyle(el).display !== 'none');
 if (editors.length !== 1) throw new Error('Exactly one visible editor is required');
@@ -63,5 +69,5 @@ if (read() !== backup.text) {
 if (read() !== backup.text) throw new Error('Draft readback differs; backup retained');
 sessionStorage.removeItem(key);
 return {action:'draft_restored',characters:backup.text.length};`}
-`);
+`, guard.inline));
 }

@@ -4,7 +4,7 @@ param(
  [Parameter(Mandatory)][ValidateSet('Inspect','SelectTab','NewTab','CloseTab','Navigate','Reload','OpenConsole','CloseConsole','ConsoleWrite','ConsoleExecute','ReadConsole','SendKeys','Invoke')][string]$Action,
  [string]$Hwnd, [string]$ExpectedTab, [string]$ExpectedUrl,
  [string]$TabName, [string]$Url, [string]$File, [string]$ConsoleSha256,
- [switch]$ReplaceConsole, [string]$Sentinel,
+ [switch]$ReplaceConsole, [switch]$PasteConsole, [string]$Sentinel,
  [ValidateSet('Chrome','Console','Editor')][string]$Focus,
  [string]$EditorName = 'Ask ChatGPT', [string]$Keys,
  [string]$AutomationId, [string]$ElementName, [string]$ScopeId,
@@ -103,10 +103,32 @@ try {
    $source = [IO.File]::ReadAllText((Resolve-Path -LiteralPath $File).Path, [Text.Encoding]::UTF8)
    $inputElement = Get-FirefoxConsoleInput $root
    $valuePattern = [System.Windows.Automation.ValuePattern]$inputElement.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern)
-   if ($valuePattern.Current.Value.Trim() -and -not $ReplaceConsole) { throw 'Console already contains text. Inspect it or use ReplaceConsole for an authorized replacement.' }
+   if ((Get-FirefoxConsoleCode $root).Trim() -and -not $ReplaceConsole) { throw 'Console already contains text. Inspect it or use ReplaceConsole for an authorized replacement.' }
    Send-FirefoxKeys $context $inputElement '^a{BACKSPACE}'
-   $valuePattern.SetValue($source)
-   Wait-FirefoxCondition { return (Normalize-FirefoxCode $valuePattern.Current.Value) -ceq (Normalize-FirefoxCode $source) }
+   if ($PasteConsole) {
+    # Real paste updates the Console editor's internal state; UIA SetValue may
+    # update only its DOM value and get discarded when the editor regains focus.
+    $original = [System.Windows.Forms.Clipboard]::GetDataObject()
+    $backup = New-Object System.Windows.Forms.DataObject
+    if ($original) {
+     foreach ($format in $original.GetFormats($false)) {
+      $data = $original.GetData($format, $false)
+      if ($data -is [IO.MemoryStream]) { $data = New-Object IO.MemoryStream(,$data.ToArray()) }
+      $backup.SetData($format, $false, $data)
+     }
+    }
+    try {
+     [System.Windows.Forms.Clipboard]::SetText($source)
+     Send-FirefoxKeys $context $inputElement '^v'
+     Wait-FirefoxCondition { return (Normalize-FirefoxCode (Get-FirefoxConsoleCode $root)) -ceq (Normalize-FirefoxCode $source) }
+    } finally {
+     if ([System.Windows.Forms.Clipboard]::ContainsText() -and [System.Windows.Forms.Clipboard]::GetText() -ceq $source) {
+      if ($original) { [System.Windows.Forms.Clipboard]::SetDataObject($backup, $true) }
+      else { [System.Windows.Forms.Clipboard]::Clear() }
+     }
+    }
+   } else { $valuePattern.SetValue($source) }
+   Wait-FirefoxCondition { return (Normalize-FirefoxCode (Get-FirefoxConsoleCode $root)) -ceq (Normalize-FirefoxCode $source) }
    $result.consoleSha256 = Get-FirefoxCodeHash $source
    $result.characters = $source.Length
    $result.executed = $false
@@ -115,12 +137,18 @@ try {
    if ($ConsoleSha256 -notmatch '^[a-f0-9]{64}$') { throw 'ConsoleSha256 from ConsoleWrite is required.' }
    $inputElement = Get-FirefoxConsoleInput $root
    $valuePattern = [System.Windows.Automation.ValuePattern]$inputElement.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern)
-   if ((Get-FirefoxCodeHash $valuePattern.Current.Value) -cne $ConsoleSha256) { throw 'Console text changed after preparation. Execution cancelled.' }
+   Wait-FirefoxCondition {
+    $null = Assert-FirefoxTarget $context -Foreground
+    return (Get-FirefoxCodeHash (Get-FirefoxConsoleCode $root)) -ceq $ConsoleSha256
+   }
    $frame = Get-FirefoxConsole $root
    $run = @(Find-FirefoxElements $frame 'Name' $RunButtonName | Where-Object { $_.Current.ControlType -eq [System.Windows.Automation.ControlType]::Button -and -not $_.Current.IsOffscreen })
    if ($run.Count -eq 0) {
     Focus-FirefoxElement $context $inputElement
-    if ((Get-FirefoxCodeHash $valuePattern.Current.Value) -cne $ConsoleSha256) { throw 'Console text changed. Execution cancelled.' }
+    Wait-FirefoxCondition {
+     $null = Assert-FirefoxTarget $context -Foreground
+     return (Get-FirefoxCodeHash (Get-FirefoxConsoleCode $root)) -ceq $ConsoleSha256
+    }
     $null = Assert-FirefoxTarget $context -Foreground
     [System.Windows.Forms.SendKeys]::SendWait('{ENTER}')
    }
@@ -133,7 +161,7 @@ try {
     $hit = [FirefoxNativeWin32]::WindowFromPoint((New-Object FirefoxNativeWin32+Point($x, $y)))
     if ([FirefoxNativeWin32]::GetAncestor($hit, 2) -ne $context.Handle) { throw 'Another window covers the Run button. No click sent.' }
     $null = Assert-FirefoxTarget $context -Foreground
-    if ((Get-FirefoxCodeHash $valuePattern.Current.Value) -cne $ConsoleSha256) { throw 'Console text changed. Execution cancelled.' }
+    if ((Get-FirefoxCodeHash (Get-FirefoxConsoleCode $root)) -cne $ConsoleSha256) { throw 'Console text changed. Execution cancelled.' }
     [FirefoxNativeWin32]::mouse_event(2, 0, 0, 0, [UIntPtr]::Zero)
     [FirefoxNativeWin32]::mouse_event(4, 0, 0, 0, [UIntPtr]::Zero)
    } else { throw 'Console Run button is ambiguous.' }

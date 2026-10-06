@@ -6,6 +6,7 @@ const guard = {title:'测试编辑器',url:'https://example.test/editor',sentine
 function page(html='<textarea id="prompt-textarea"></textarea>') {
   const dom=new JSDOM(`<title>${guard.title}</title>${html}`,{url:guard.url,runScripts:'outside-only'});
   const results=[]; dom.window.console.log=value=>results.push(JSON.parse(value.slice('TEST_RESULT '.length)));
+  dom.window.TextDecoder=TextDecoder;
   return {dom,w:dom.window,results};
 }
 async function run(p,code) { await p.w.eval(code); return p.results.at(-1); }
@@ -41,6 +42,17 @@ test('ambiguous matching editors and missing save controls cause no edit',async(
  else p.w.document.getElementById('save').remove();
  assert.equal((await run(p,userscriptTask({...guard,source,namespace:'test.namespace',saveId:'save',mode:'prepare'}))).ok,false);
  assert.equal(p.value(),before);p.w.close();}
+});
+
+test('inline userscript task preserves Unicode and repeated spaces without eval or multiline console input',async()=>{
+ const p=editorPage(),unicodeSource=source+'\nconst spaced = "two  spaces 和中文";';
+ const task=userscriptTask({...guard,inline:true,source:unicodeSource,namespace:'test.namespace',saveId:'save',mode:'prepare'});
+ assert.equal(/[\r\n]/.test(task),false);
+ assert.equal(task.includes('two  spaces'),false);
+ assert.equal(/\beval\s*\(|\bFunction\s*\(/.test(task),false);
+ assert.equal((await run(p,task)).ok,true);
+ assert.equal(p.value(),unicodeSource);p.w.close();
+ assert.throws(()=>wrapPageTask({...guard,inline:true},'// preserve comment\nreturn {};'),/single line/);
 });
 test('draft backup is not overwritten and restore preserves a new draft',async()=>{
  const p=page(),el=p.w.document.querySelector('textarea');el.value='原草稿\nsecond line';

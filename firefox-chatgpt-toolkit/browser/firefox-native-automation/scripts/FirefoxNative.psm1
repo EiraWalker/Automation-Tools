@@ -74,6 +74,9 @@ function Assert-FirefoxTarget($Context, [switch]$Foreground, [switch]$AllowMinim
 function Activate-FirefoxTarget($Context) {
     # Validate first: an incorrect selector must not steal another window's focus.
     $null = Assert-FirefoxTarget $Context
+    if ([FirefoxNativeWin32]::GetForegroundWindow() -eq $Context.Handle) {
+        return Assert-FirefoxTarget $Context -Foreground
+    }
     $thread = [FirefoxNativeWin32]::GetCurrentThreadId()
     [uint32]$ignoredPid = 0
     $foregroundThread = [FirefoxNativeWin32]::GetWindowThreadProcessId([FirefoxNativeWin32]::GetForegroundWindow(), [ref]$ignoredPid)
@@ -106,6 +109,22 @@ function Get-FirefoxConsoleInput($Root) {
     $inputs = @(Find-FirefoxElements $frame 'ControlType' ([System.Windows.Automation.ControlType]::Edit) | Where-Object { $_.Current.Name -eq '' })
     if ($inputs.Count -ne 1) { throw 'Firefox console input is ambiguous.' }
     return $inputs[0]
+}
+function Get-FirefoxConsoleCode($Root) {
+    $inputElement = Get-FirefoxConsoleInput $Root
+    $walker = [System.Windows.Automation.TreeWalker]::ControlViewWalker
+    $node = $inputElement
+    for ($i = 0; $i -lt 6 -and $node; $i++) {
+        if ($node.Current.ClassName -match '^CodeMirror(?: |$)') {
+            # Firefox's hidden CodeMirror textarea is empty even when the editor
+            # contains code. Read its syntax text nodes, excluding only the
+            # screen-reader padding at the start/end of the rendered line.
+            $tokens = @(Find-FirefoxElements $node 'ControlType' ([System.Windows.Automation.ControlType]::Text) | ForEach-Object { $_.Current.Name })
+            return ($tokens -join '').TrimStart([char]0xA0).TrimEnd([char]0x200B)
+        }
+        $node = $walker.GetParent($node)
+    }
+    return ([System.Windows.Automation.ValuePattern]$inputElement.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern)).Current.Value
 }
 function Focus-FirefoxElement($Context, $Element) {
     $null = Assert-FirefoxTarget $Context -Foreground

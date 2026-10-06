@@ -4,6 +4,7 @@ const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 const visible = element => Boolean(element && element.getClientRects().length && getComputedStyle(element).visibility !== 'hidden');
 const firstVisible = (selector, root = document) => [...root.querySelectorAll(selector)].find(visible) || null;
 const uuid = () => crypto.randomUUID();
+const queueFailure = (code, message) => Object.assign(new Error(message), { code });
 const ICONS = {
   down: '<path d="m4 6 4 4 4-4"/>', up: '<path d="m4 10 4-4 4 4"/>',
   trash: '<path d="M3 4h10M6 4V2h4v2M5 6v7m3-7v7m3-7v7M4 4l1 11h6l1-11"/>',
@@ -58,8 +59,26 @@ class ChatGPTAdapter {
   composer() { return this.editor()?.closest('[data-chatgpt-composer],form,[data-type="unified-composer"]') || this.editor()?.parentElement?.parentElement; }
   text() { const editor = this.editor(); return normalize(editor?.value ?? editor?.innerText ?? ''); }
   messages(role) {
-    const legacy = [...document.querySelectorAll(`[data-message-author-role="${role}"]`)];
-    return legacy.length ? legacy : [...document.querySelectorAll(`[data-content-search-unit-key$=":${role}"]`)];
+    const root = this.editor()?.closest('[data-request-input-activity-root],main,[role="main"]') || document;
+    const nodes = [...root.querySelectorAll(`[data-message-author-role="${role}"],[data-content-search-unit-key$=":${role}"]`)];
+    return nodes.filter(node => visible(node) && !nodes.some(other => other !== node && node.contains(other)));
+  }
+  messageText(node) { return normalize((node?.querySelector('[data-user-message-bubble] [data-search-result-target],[data-user-message-bubble]') || node)?.innerText || ''); }
+  receipt(active, text) {
+    const users = this.messages('user');
+    let found;
+    if (active.phase === 'waiting') found = users.find((node, index) => this.key(node, index + 1) === active.userKey && this.messageText(node) === normalize(text));
+    if (!found && Object.hasOwn(active, 'beforeUserKey')) {
+      const baseline = users.findIndex((node, index) => this.key(node, index + 1) === active.beforeUserKey);
+      if (baseline >= 0) found = users[baseline + 1];
+      if (found && this.messageText(found) !== normalize(text)) return { status: 'changed' };
+    }
+    if (!found && active.phase === 'waiting') {
+      const matches = users.filter(node => this.messageText(node) === normalize(text));
+      if (matches.length === 1) found = matches[0];
+    }
+    if (!found) return { status: 'pending' };
+    return { status: found === users.at(-1) ? 'accepted' : 'changed', userKey: this.key(found, users.indexOf(found) + 1) };
   }
   key(node, index) {
     if (!node) return null;
@@ -77,14 +96,14 @@ class ChatGPTAdapter {
     const busy = Boolean(stop || firstVisible('[data-is-streaming="true"],.result-streaming'));
     const finished = Boolean(turn?.querySelector('[data-testid="copy-turn-action-button"],[data-testid="good-response-turn-action-button"],[data-testid="bad-response-turn-action-button"]') ||
       (turn?.querySelector('.turn-action-controls button[aria-label="Copy"]') && turn?.querySelector('.turn-action-controls button[aria-label="Regenerate response"]')));
-    const errorNode = firstVisible('[role="alert"]', turn || document);
+    const errorNode = [...(turn || document).querySelectorAll('[role="alert"]')].find(node => visible(node) && !node.closest('#chatgpt-queue-accent,#chatgpt-queue-settings'));
     const errorText = errorNode?.textContent || '';
     const error = /something went wrong|network error|failed|limit|try again|出错|错误|上限|重试|失敗|限制/i.test(errorText)
       ? '页面提示出错或达到限制，请处理后继续。' : '';
     const attachments = Boolean(composer?.querySelector('[data-testid="file-upload-preview"],[data-testid="attachment"],[data-testid*="attachment-preview"],[data-composer-attachment],[data-composer-file-preview],button[aria-label^="Remove file"],button[aria-label^="Remove attachment"],img[src^="blob:"]'));
     const special = composer && /deep research|深入研究|深度研究|研究模式/i.test(composer.textContent || '');
     return {
-        userKey: this.key(user, users.length), userText: normalize((user?.querySelector('[data-user-message-bubble] [data-search-result-target],[data-user-message-bubble]') || user)?.innerText || ''),
+        userKey: this.key(user, users.length), userText: this.messageText(user), userCount: users.length,
       busy, complete: Boolean(assistant && finished && !busy),
       ready: Boolean(editor && this.conversation && route() === this.conversation && !special),
       draft: this.text(), attachments,
@@ -139,15 +158,15 @@ class ChatGPTAdapter {
     send.click();
     const ackDeadline = Date.now() + 12000;
     while (Date.now() < ackDeadline) {
-      if (route() !== this.conversation) throw new Error('发送期间切换了会话，请核对是否已发送。');
+      if (route() !== this.conversation) throw queueFailure('Q_SEND_ROUTE_CHANGED', '发送确认期间会话发生变化。');
       const after = this.snapshot();
       if (after.userKey && after.userKey !== before.userKey) {
-        if (after.userText !== normalize(text)) throw new Error('检测到不同的用户消息，请核对发送结果。');
+        if (after.userText !== normalize(text)) throw queueFailure('Q_ACK_MISMATCH', '页面出现了不匹配的用户消息。');
         return after.userKey;
       }
       await sleep(150);
     }
-    throw new Error('未能确认消息已发送；请核对聊天记录，勿直接重试。');
+    throw queueFailure('Q_ACK_TIMEOUT', '发送确认超时。');
   }
 }
 
@@ -201,7 +220,14 @@ class QueuePanel {
     this.host = document.createElement('div'); this.host.id = 'chatgpt-queue-accent';
     this.root = this.host.attachShadow({ mode: 'open' });
     const style = document.createElement('style'); style.textContent = QUEUE_CSS; this.root.append(style);
-    this.root.innerHTML += `<section aria-label="消息队列"><div class="recovery" hidden><p>上次发送结果需要核对。请查看聊天记录后选择：</p><div class="actions"></div></div><div class="error" role="alert" hidden></div><div class="list"></div><div class="footer"><span class="hint">Ctrl + Enter  Enqueue</span><div class="actions"></div></div></section>`;
+    const section = document.createElement('section'); section.setAttribute('aria-label', '消息队列');
+    section.innerHTML = `<div class="error" role="alert" hidden></div><div class="list"></div><div class="footer"><span class="hint">Ctrl + Enter  Enqueue</span><div class="actions"></div></div>`;
+    this.root.append(section);
+    this.faultCard = new NoticeCard({ actions: [
+      { label: '复制诊断', accent: true, action: () => actions.diagnostics?.() },
+      { label: '重新检测', action: () => actions.recheck?.() },
+    ] });
+    this.faultCard.element.hidden = true; section.prepend(this.faultCard.element);
     this.error = this.root.querySelector('.error');
     this.list = this.root.querySelector('.list');
     this.list.hidden = true;
@@ -211,10 +237,6 @@ class QueuePanel {
     this.cancel = button('取消编辑', () => actions.cancelEdit(), 'pill');
     this.cancel.title = '保留原生输入框中的文字，退出队列编辑'; this.cancel.hidden = true;
     this.queueActions.append(this.cancel, this.save);
-    this.root.querySelector('.recovery .actions').append(
-      button('已发送，移出', () => actions.resolve(true), 'pill accent'),
-      button('未发送，退回', () => actions.resolve(false), 'pill'),
-    );
     this.rows = new Map();
   }
   render(engine, owner, notice = '', editingId = null) {
@@ -222,11 +244,14 @@ class QueuePanel {
     this.list.hidden = !state.items.length;
     this.queueActions.hidden = !editingId;
     this.error.textContent = notice;
-    this.error.hidden = !notice || !state.items.length;
+    this.error.hidden = !notice || !state.items.length || Boolean(state.fault);
     this.save.disabled = !owner; this.save.hidden = !editingId;
     this.cancel.hidden = !editingId; this.cancel.disabled = !owner;
-    this.root.querySelector('.recovery').hidden = !engine?.recovery || !state.items.length;
-    for (const control of this.root.querySelectorAll('.recovery button')) control.disabled = !owner || engine?.running;
+    this.faultCard.element.hidden = !state.fault;
+    this.faultCard.setMessage(state.fault ? `队列执行出错（${state.fault.code}），自动发送已停止。` : '');
+    this.faultCard.buttons[1].disabled = !owner || Boolean(engine?.running);
+    this.host.dataset.cqError = state.fault?.code || '';
+    this.host.dataset.cqOwner = String(owner);
     const ids = new Set(state.items.map(item => item.id));
     for (const [id, row] of this.rows) if (!ids.has(id)) { row.remove(); this.rows.delete(id); }
     state.items.forEach((item, index) => {
@@ -318,7 +343,7 @@ class QueueSettings {
 
 // Export only in the local test harness, never through a page-controlled bridge.
 if (typeof module !== 'undefined' && module.exports && typeof process !== 'undefined') {
-  module.exports = { ChatGPTAdapter, QueuePanel, WideLayout, NativeQueueInput, enqueueShortcut, QueueSettings };
+  module.exports = { ChatGPTAdapter, QueuePanel, WideLayout, NativeQueueInput, enqueueShortcut, QueueSettings, NoticeCard };
 } else {
   bootQueue().catch(error => console.error('[ChatGPT Queue] Initialization failed:', error));
 }
@@ -344,14 +369,24 @@ async function bootQueue() {
     try { notice = ''; callback(); render(); }
     catch (error) { notice = error.message; render(); }
   }
+  function reportFault(fault) {
+    console.error(`[ChatGPT Queue][${fault.code}]`, JSON.stringify(fault));
+    page.document.dispatchEvent(new page.CustomEvent('chatgpt-queue:error', { detail: JSON.stringify(fault) }));
+  }
   const panel = new QueuePanel({
     capture: () => act(() => input.capture()),
     edit: id => act(() => input.edit(id)), cancelEdit: () => act(() => input.cancel()),
     remove: id => act(() => engine.remove(id)), move: (id, delta) => act(() => engine.move(id, delta)),
-    resolve: sent => act(() => {
-      if (!sent && !window.confirm('请确认聊天记录中没有这条消息。退回后再次运行可能重复发送。')) return;
-      engine.resolve(sent);
-    }),
+    diagnostics: () => {
+      try {
+        GM_setClipboard(JSON.stringify({ ...engine.diagnostics(), scriptVersion: '1.6.0', owner }, null, 2), 'text');
+        panel.faultCard.buttons[0].textContent = '诊断已复制';
+      } catch (error) {
+        panel.faultCard.setMessage(`复制诊断失败（${engine.state.fault?.code || 'Q_DIAGNOSTIC_COPY_FAILED'}）。`);
+        console.error('[ChatGPT Queue][Q_DIAGNOSTIC_COPY_FAILED]');
+      }
+    },
+    recheck: () => act(() => engine.recheck()),
   });
   const layoutListener = GM_addValueChangeListener(layoutKey, (_key, _old, value, remote) => {
     if (remote) { layout.enabled = Boolean(value); layout.update(adapter); settings.sync(layout.enabled); }
@@ -372,7 +407,7 @@ async function bootQueue() {
     const targetKey = storageKey;
     adapter = new ChatGPTAdapter(id);
     layout.update(adapter);
-    engine = new QueueEngine({ saved: GM_getValue(targetKey, null), save: state => GM_setValue(targetKey, state), adapter, changed: render });
+    engine = new QueueEngine({ saved: GM_getValue(targetKey, null), save: state => GM_setValue(targetKey, state), adapter, changed: render, onError: reportFault });
     input = new NativeQueueInput(engine, adapter);
     listener = GM_addValueChangeListener(targetKey, (_key, _old, value, remote) => {
       if (remote && !owner && token === generation) {
@@ -396,7 +431,7 @@ async function bootQueue() {
         GM_setValue(targetKey, migrate); GM_setValue(keyFor(null), emptyState());
       }
       owner = true;
-      engine = new QueueEngine({ saved: GM_getValue(targetKey, null), save: state => GM_setValue(targetKey, state), adapter, changed: render });
+      engine = new QueueEngine({ saved: GM_getValue(targetKey, null), save: state => GM_setValue(targetKey, state), adapter, changed: render, onError: reportFault });
       input = new NativeQueueInput(engine, adapter);
       engine.commit(); notice = ''; render(); acquired(true);
       return held;
@@ -427,7 +462,7 @@ async function bootQueue() {
     if (owner && target?.matches(STOP_SELECTOR)) {
       act(() => engine.pause('你已停止回答；队列同时暂停。'));
     }
-    if (owner && target === adapter.sendButton() && engine.state.active?.phase !== 'submitting' && (input.editingId || engine.state.items.length || adapter.snapshot().busy)) {
+    if (owner && target && target === adapter.sendButton() && engine.state.active?.phase !== 'submitting' && (input.editingId || engine.state.items.length || adapter.snapshot().busy)) {
       event.preventDefault(); event.stopImmediatePropagation(); panel.actions.capture();
     }
   }, true);

@@ -29,7 +29,7 @@ $targetTab = '<要操作的标签完整名称>'
 | Navigate | `-Url`，请求导航；另行确认实际文档 |
 | Reload | 请求刷新；调用前保存草稿并确认没有待发队列/生成任务 |
 | OpenConsole / CloseConsole | 原生 Web Console |
-| ConsoleWrite | `-File` UTF-8；返回 `consoleSha256`，不执行；已有内容需明确 `-ReplaceConsole` |
+| ConsoleWrite | `-File` UTF-8；CodeMirror 使用 `-PasteConsole` 真实粘贴并恢复剪贴板；返回 `consoleSha256`，不执行；已有内容需明确 `-ReplaceConsole` |
 | ConsoleExecute | `-ConsoleSha256`；只执行与写入时完全一致的内容 |
 | ReadConsole | `-Sentinel`，只输出匹配该标记的结果 |
 | SendKeys | `-Focus Chrome\|Console\|Editor -Keys`，Editor 名称可用 `-EditorName` 配置 |
@@ -37,7 +37,7 @@ $targetTab = '<要操作的标签完整名称>'
 
 ReadConsole 与所有修改操作都需要 `-Hwnd -ExpectedTab`。`-ExpectedUrl` 可选，比较完整地址（仅兼容 Firefox 隐去 https://）；它不是文档 URL 的替代。地址栏被用户编辑后，应检查草稿，不自动修正。
 
-ConsoleExecute 在单行 Console 用 Enter；多行模式按原生 Run 按钮，要求其坐标位于屏幕且属于目标窗口。按钮名称可用 `-RunButtonName` 配置。本地化、Firefox UIA 标记或开发者工具布局变化可能需要适配。CLI 只报告 `executionRequested`、`save_requested` 等请求状态，不能据此断言执行成功。
+当前 CodeMirror 原生路径使用生成器的 `--inline` 单行任务，详见 page-workflow；多行/连续空格的语法文本不能可靠还原时，哈希核验会拒绝执行。ConsoleExecute 在单行 Console 用 Enter；多行模式按原生 Run 按钮，要求其坐标位于屏幕且属于目标窗口。按钮名称可用 `-RunButtonName` 配置。本地化、Firefox UIA 标记或开发者工具布局变化可能需要适配。CLI 只报告 `executionRequested`、`save_requested` 等请求状态，不能据此断言执行成功。
 
 ## 页面代码、安装与调试
 

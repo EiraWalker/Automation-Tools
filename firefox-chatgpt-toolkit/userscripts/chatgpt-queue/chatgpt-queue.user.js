@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Queue · Accent
 // @namespace    local.chatgpt-queue-accent
-// @version      1.5.4
+// @version      1.6.0
 // @description  ChatGPT 消息队列与会话全宽：逐条发送、编辑排序、暂停恢复，跟随当前 Accent color。
 // @match        https://chatgpt.com/*
 // @run-at       document-idle
@@ -14,6 +14,7 @@
 // @grant        GM_addValueChangeListener
 // @grant        GM_removeValueChangeListener
 // @grant        GM_registerMenuCommand
+// @grant        GM_setClipboard
 // @grant        unsafeWindow
 // @license      GPL-3.0-or-later
 // ==/UserScript==
@@ -26,21 +27,25 @@
 'use strict';
 
 const normalize = value => String(value ?? '').replace(/\r\n?/g, '\n').replace(/\u00a0/g, ' ').trim();
-const emptyState = () => ({ version: 1, items: [], active: null, paused: true, reason: '' });
+const emptyState = () => ({ version: 1, items: [], active: null, paused: true, reason: '', fault: null });
 
 class QueueEngine {
-  constructor({ saved, save, adapter, changed = () => {}, now = Date.now, id = () => crypto.randomUUID() }) {
+  constructor({ saved, save, adapter, changed = () => {}, onError = () => {}, now = Date.now, id = () => crypto.randomUUID() }) {
     this.state = saved?.version === 1 ? structuredClone(saved) : emptyState();
     this.state.paused = true;
-    this.state.reason = this.state.active ? '上次发送尚未核对，请先处理该条消息。' : '';
+    this.state.fault = this.state.fault || null;
+    this.state.reason = this.state.fault ? '队列执行出错，自动发送已停止。' : '';
     this.save = save;
     this.adapter = adapter;
     this.changed = changed;
+    this.onError = onError;
     this.now = now;
     this.id = id;
     this.running = false;
     this.disposed = false;
-    this.recovery = Boolean(this.state.active);
+    this.recovery = false;
+    this.needsReconcile = Boolean(this.state.active);
+    this.reconcileSince = null;
     this.expectedUser = null;
     this.stableSince = null;
     this.epoch = 0;
@@ -51,10 +56,13 @@ class QueueEngine {
     // Persist before a click. A failed write must prevent any dispatch.
     try { this.save(structuredClone(this.state)); }
     catch (error) {
+      const reported = this.state.fault?.code === 'Q_STORAGE_FAILED';
+      this.state.fault = { code: 'Q_STORAGE_FAILED', stage: 'persist', at: this.now(), phase: this.state.active?.phase || null };
       this.state.paused = true;
       this.state.reason = '保存失败，已暂停；请勿刷新页面。';
       this.status = this.state.reason;
       this.changed(this);
+      if (!reported) this.onError(structuredClone(this.state.fault));
       throw error;
     }
     this.changed(this);
@@ -94,11 +102,12 @@ class QueueEngine {
   }
 
   resume() {
-    if (this.recovery) throw new Error('请先核对上次发送是否成功。');
+    if (this.needsReconcile) this.reconcile();
+    if (this.state.fault || this.needsReconcile) throw new Error(this.state.fault ? `队列错误：${this.state.fault.code}` : '正在读取页面消息记录。');
     if (!this.state.items.length) return;
     const snapshot = this.adapter.snapshot();
     if (snapshot.error) throw new Error(snapshot.error);
-    this.expectedUser = snapshot.userKey;
+    this.expectedUser = this.state.active?.userKey || snapshot.userKey;
     this.state.paused = false;
     this.state.reason = '';
     this.status = '等待当前回答结束';
@@ -115,12 +124,56 @@ class QueueEngine {
     this.commit();
   }
 
-  resolve(sent) {
-    if (!this.recovery || this.running) return;
-    if (sent) this.state.items = this.state.items.filter(item => item.id !== this.state.active?.id);
-    this.state.active = null;
-    this.recovery = false;
-    this.pause(sent ? '已移出该条；请确认上一轮已结束再继续。' : '已退回队列，请确认不会重复发送再继续。');
+  diagnostics(snapshot = this.adapter.snapshot()) {
+    return { schemaVersion: 1, fault: this.state.fault, queueLength: this.state.items.length,
+      phase: this.state.active?.phase || null, paused: this.state.paused,
+      signals: { ready: Boolean(snapshot.ready), busy: Boolean(snapshot.busy), complete: Boolean(snapshot.complete),
+        attachments: Boolean(snapshot.attachments), pageError: Boolean(snapshot.error),
+        userCount: snapshot.userCount ?? null, draftLength: snapshot.draft?.length || 0,
+        receivedLength: snapshot.userText?.length ?? null } };
+  }
+
+  fail(code, stage, snapshot = this.adapter.snapshot()) {
+    const previous = this.state.fault?.code;
+    if (previous === code && this.state.fault.stage === stage) return;
+    const signals = this.diagnostics(snapshot).signals;
+    this.state.fault = { code, stage, at: this.now(), phase: this.state.active?.phase || null,
+      hasBaseline: Boolean(this.state.active && Object.hasOwn(this.state.active, 'beforeUserKey')), signals };
+    this.needsReconcile = Boolean(this.state.active);
+    this.pause(`队列执行出错（${code}），自动发送已停止。`);
+    if (previous !== code) this.onError(structuredClone(this.state.fault));
+  }
+
+  reconcile(snapshot = this.adapter.snapshot()) {
+    const active = this.state.active;
+    if (!active || this.running || this.disposed) return;
+    if (active.phase === 'preparing') {
+      this.state.active = null; this.state.fault = null; this.needsReconcile = false;
+      this.commit(); return;
+    }
+    if (snapshot.error) { this.fail('Q_PAGE_ERROR', 'restore', snapshot); return; }
+    if (!snapshot.ready) return;
+    const item = this.state.items.find(item => item.id === active.id);
+    if (!item) { this.fail('Q_STATE_INVALID', 'restore', snapshot); return; }
+    const receipt = this.adapter.receipt ? this.adapter.receipt(active, item.text) :
+      { status: active.phase === 'waiting' && snapshot.userKey === active.userKey ? 'accepted' : 'pending', userKey: snapshot.userKey };
+    if (receipt.status === 'accepted') {
+      this.state.active = { ...active, phase: 'waiting', userKey: receipt.userKey };
+      this.expectedUser = receipt.userKey; this.state.fault = null; this.state.reason = '';
+      this.needsReconcile = false; this.reconcileSince = null; this.commit(); return;
+    }
+    if (receipt.status === 'changed') { this.fail('Q_CONTEXT_CHANGED', 'restore', snapshot); return; }
+    if (this.reconcileSince === null) this.reconcileSince = this.now();
+    if (this.now() - this.reconcileSince >= 12000 && !this.state.fault) this.fail('Q_RECEIPT_MISSING', 'restore', snapshot);
+  }
+
+  recheck() {
+    if (this.running || this.disposed) return;
+    if (this.state.active) { this.needsReconcile = true; this.reconcile(); }
+    else {
+      const snapshot = this.adapter.snapshot();
+      if (snapshot.ready && !snapshot.error) { this.state.fault = null; this.state.reason = ''; this.commit(); }
+    }
   }
 
   settled(snapshot) {
@@ -133,16 +186,19 @@ class QueueEngine {
   }
 
   async tick() {
-    if (this.running || this.disposed || this.state.paused || !this.state.items.length) return;
+    if (this.running || this.disposed) return;
+    if (this.needsReconcile) { this.reconcile(); return; }
+    if (this.state.paused || !this.state.items.length) return;
     this.running = true;
     try {
       const snapshot = this.adapter.snapshot();
-      if (snapshot.error) { this.pause(snapshot.error); return; }
+      if (snapshot.error) { this.fail('Q_PAGE_ERROR', 'page', snapshot); return; }
       const active = this.state.active;
       if (active) {
         if (snapshot.userKey !== active.userKey) {
-          this.recovery = true;
-          this.pause('会话内容已改变，请核对正在处理的消息。');
+          this.needsReconcile = true;
+          this.running = false;
+          this.reconcile(snapshot);
           return;
         }
         if (this.settled(snapshot)) {
@@ -165,7 +221,7 @@ class QueueEngine {
 
       const item = this.state.items[0];
       const epoch = this.epoch;
-      this.state.active = { id: item.id, phase: 'preparing', userKey: null };
+      this.state.active = { id: item.id, phase: 'preparing', userKey: null, beforeUserKey: snapshot.userKey };
       this.commit();
       const valid = () => !this.disposed && !this.state.paused && epoch === this.epoch;
       try {
@@ -173,15 +229,17 @@ class QueueEngine {
           this.state.active.phase = 'submitting';
           this.commit();
         });
-        this.state.active = { id: item.id, phase: 'waiting', userKey };
+          this.state.active = { ...this.state.active, phase: 'waiting', userKey };
         this.expectedUser = userKey;
         this.stableSince = null;
         this.status = '等待本条回答结束';
         this.commit();
       } catch (error) {
-        if (this.state.active?.phase === 'preparing') this.state.active = null;
-        else this.recovery = true;
-        this.pause(error.message || '发送结果未知，请核对后再继续。');
+          if (this.state.active?.phase === 'preparing') {
+            this.state.active = null;
+            if (!valid()) this.pause(error.message);
+            else this.fail(error.code || 'Q_SEND_PREPARE_FAILED', 'prepare');
+          } else this.fail(error.code || 'Q_SEND_FAILED', 'acknowledge');
       }
     } finally {
       this.running = false;
@@ -196,13 +254,32 @@ class QueueEngine {
 }
 
 
-const QUEUE_CSS = "/* SPDX-License-Identifier: GPL-3.0-or-later\r\n   Rounded inline queue layout inspired by kgruiz/chatgpt-queue. */\r\n:host {\r\n  --cq-accent: var(--color-background-composer-primary, var(--theme-submit-btn-bg, var(--interactive-bg-accent-default, var(--text-accent, #707070))));\r\n  --cq-on-accent: var(--color-text-composer-primary, var(--theme-submit-btn-text, var(--text-inverted, #fff)));\r\n  --cq-text: var(--color-text-primary, var(--text-primary, #202123));\r\n  --cq-muted: var(--color-text-secondary, var(--text-secondary, #676767));\r\n  --cq-bg: var(--color-background-primary, var(--color-background-surface, var(--bg-primary, #fff)));\n  --cq-card: var(--color-background-composer-surface, var(--bg-elevated-secondary, var(--bg-secondary, #f4f4f4)));\r\n  --cq-border: var(--color-border-default, var(--color-token-border-default, var(--border-light, color-mix(in srgb, currentColor 15%, transparent))));\n  display: block; margin: 0 0 10px; width: 100%; color: var(--cq-text);\r\n  font: 13px/1.5 var(--font-sans, ui-sans-serif, system-ui, sans-serif);\r\n  color-scheme: inherit;\r\n}\r\n* { box-sizing: border-box; }\r\nbutton { font: inherit; }\r\nbutton { color: inherit; cursor: pointer; border: 0; background: transparent; }\r\nbutton:disabled { opacity: .45; cursor: default; }\r\nbutton:focus-visible { outline: 2px solid var(--cq-accent); outline-offset: 3px; }\r\n.pill { border-radius: 999px; padding: 6px 12px; border: 1px solid var(--cq-border); white-space: nowrap; }\r\n.accent { color: var(--cq-accent); background: color-mix(in srgb, var(--cq-accent) 12%, transparent); border-color: color-mix(in srgb, var(--cq-accent) 38%, transparent); }\r\n.solid { color: var(--cq-on-accent); background: var(--cq-accent); border-color: transparent; }\r\n.pill:hover:not(:disabled), .icon:hover:not(:disabled) { background: color-mix(in srgb, var(--cq-accent) 15%, var(--cq-card)); }\r\n.solid:hover:not(:disabled) { background: var(--cq-accent); filter: brightness(.92); }\r\n.list { display: flex; flex-direction: column; gap: 8px; max-height: min(35vh, 320px); overflow: auto; padding: 3px; }\r\n.row { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border: 1px solid var(--cq-border); background: var(--cq-card); border-radius: 24px; }\r\n.row.active, .row.editing { border-color: color-mix(in srgb, var(--cq-accent) 65%, transparent); }\r\n.number { width: 29px; height: 29px; display: grid; place-items: center; border-radius: 50%; background: color-mix(in srgb, var(--cq-accent) 13%, var(--cq-card)); color: var(--cq-accent); font-weight: 600; flex-shrink: 0; }\r\n.icon { width: 26px; height: 28px; border-radius: 8px; display: grid; place-items: center; }\r\n.icons { display: flex; gap: 2px; }\r\n.footer { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 8px 3px 0; }\r\n.hint { color: var(--cq-muted); font-size: 11px; white-space: pre-wrap; }\r\n.recovery { border: 1px solid color-mix(in srgb, var(--cq-accent) 50%, transparent); border-radius: 16px; padding: 10px; margin: 6px 0; }\r\n.recovery p { margin: 0 0 8px; }\r\n[hidden] { display: none !important; }\r\nsvg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }\r\n@media (max-width: 560px) { .pill { padding: 6px 9px; } .row { gap: 5px; padding: 8px; } .hint { max-width: 160px; } }\r\n.message { flex: 1; min-width: 0; max-height: 160px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; padding: 3px 0; }\r\n.edit { padding: 3px 8px; }\r\n:host([hidden]) { display: none !important; }\r\n:host(#chatgpt-queue-settings) { margin: 0; width: 0; height: 0; }\r\n.actions { display: flex; align-items: center; gap: 8px; }\r\n.error { color: var(--cq-muted); padding: 6px; overflow-wrap: anywhere; }\r\ndialog { width: min(380px, calc(100vw - 32px)); padding: 24px; border: 1px solid var(--cq-border); border-radius: 20px; color: var(--cq-text); background: var(--cq-settings-bg, var(--cq-bg)); font: inherit; font-size: 14px; color-scheme: inherit; box-shadow: 0 18px 60px #0005; }\ndialog::backdrop { background: #0008; }\ndialog h2 { margin: 0 0 18px; color: var(--cq-text); font-size: 16px; font-weight: 600; line-height: 1.4; }\n.setting { display: flex; align-items: center; gap: 10px; padding: 8px 0 18px; color: var(--cq-text); cursor: pointer; }\n.setting input { width: 18px; height: 18px; margin: 0; flex-shrink: 0; accent-color: var(--cq-accent); }\n.setting input:focus-visible { outline: 2px solid var(--cq-accent); outline-offset: 3px; }\ndialog .footer { justify-content: flex-end; }\r\n";
+const QUEUE_CSS = "/* SPDX-License-Identifier: GPL-3.0-or-later\n   Rounded inline queue layout inspired by kgruiz/chatgpt-queue. */\n:host {\n  --cq-accent: var(--color-background-composer-primary, var(--theme-submit-btn-bg, var(--interactive-bg-accent-default, var(--text-accent, #707070))));\n  --cq-on-accent: var(--color-text-composer-primary, var(--theme-submit-btn-text, var(--text-inverted, #fff)));\n  --cq-text: var(--color-text-primary, var(--text-primary, #202123));\n  --cq-muted: var(--color-text-secondary, var(--text-secondary, #676767));\n  --cq-bg: var(--color-background-primary, var(--color-background-surface, var(--bg-primary, #fff)));\n  --cq-card: var(--color-background-composer-surface, var(--bg-elevated-secondary, var(--bg-secondary, #f4f4f4)));\n  --cq-border: var(--color-border-default, var(--color-token-border-default, var(--border-light, color-mix(in srgb, currentColor 15%, transparent))));\n  display: block; margin: 0 0 10px; width: 100%; color: var(--cq-text);\n  font: 13px/1.5 var(--font-sans, ui-sans-serif, system-ui, sans-serif);\n  color-scheme: inherit;\n}\n* { box-sizing: border-box; }\nbutton { font: inherit; }\nbutton { color: inherit; cursor: pointer; border: 0; background: transparent; }\nbutton:disabled { opacity: .45; cursor: default; }\nbutton:focus-visible { outline: 2px solid var(--cq-accent); outline-offset: 3px; }\n.pill { border-radius: 999px; padding: 6px 12px; border: 1px solid var(--cq-border); white-space: nowrap; }\n.accent { color: var(--cq-accent); background: color-mix(in srgb, var(--cq-accent) 12%, transparent); border-color: color-mix(in srgb, var(--cq-accent) 38%, transparent); }\n.solid { color: var(--cq-on-accent); background: var(--cq-accent); border-color: transparent; }\n.pill:hover:not(:disabled), .icon:hover:not(:disabled) { background: color-mix(in srgb, var(--cq-accent) 15%, var(--cq-card)); }\n.solid:hover:not(:disabled) { background: var(--cq-accent); filter: brightness(.92); }\n.list { display: flex; flex-direction: column; gap: 8px; max-height: min(35vh, 320px); overflow: auto; padding: 3px; }\n.row { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border: 1px solid var(--cq-border); background: var(--cq-card); border-radius: 24px; }\n.row.active, .row.editing { border-color: color-mix(in srgb, var(--cq-accent) 65%, transparent); }\n.number { width: 29px; height: 29px; display: grid; place-items: center; border-radius: 50%; background: color-mix(in srgb, var(--cq-accent) 13%, var(--cq-card)); color: var(--cq-accent); font-weight: 600; flex-shrink: 0; }\n.icon { width: 26px; height: 28px; border-radius: 8px; display: grid; place-items: center; }\n.icons { display: flex; gap: 2px; }\n.footer { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 8px 3px 0; }\n.hint { color: var(--cq-muted); font-size: 11px; white-space: pre-wrap; }\n.notice-card { border: 1px solid color-mix(in srgb, var(--cq-accent) 50%, transparent); border-radius: 16px; padding: 10px; margin: 6px 0; }\n.notice-card p { margin: 0 0 8px; overflow-wrap: anywhere; }\n[hidden] { display: none !important; }\nsvg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }\n@media (max-width: 560px) { .pill { padding: 6px 9px; } .row { gap: 5px; padding: 8px; } .hint { max-width: 160px; } }\n.message { flex: 1; min-width: 0; max-height: 160px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; padding: 3px 0; }\n.edit { padding: 3px 8px; }\n:host([hidden]) { display: none !important; }\n:host(#chatgpt-queue-settings) { margin: 0; width: 0; height: 0; }\n.actions { display: flex; align-items: center; gap: 8px; }\n.error { color: var(--cq-muted); padding: 6px; overflow-wrap: anywhere; }\ndialog { width: min(380px, calc(100vw - 32px)); padding: 24px; border: 1px solid var(--cq-border); border-radius: 20px; color: var(--cq-text); background: var(--cq-settings-bg, var(--cq-bg)); font: inherit; font-size: 14px; color-scheme: inherit; box-shadow: 0 18px 60px #0005; }\ndialog::backdrop { background: #0008; }\ndialog h2 { margin: 0 0 18px; color: var(--cq-text); font-size: 16px; font-weight: 600; line-height: 1.4; }\n.setting { display: flex; align-items: center; gap: 10px; padding: 8px 0 18px; color: var(--cq-text); cursor: pointer; }\n.setting input { width: 18px; height: 18px; margin: 0; flex-shrink: 0; accent-color: var(--cq-accent); }\n.setting input:focus-visible { outline: 2px solid var(--cq-accent); outline-offset: 3px; }\ndialog .footer { justify-content: flex-end; }\n";
+/* SPDX-License-Identifier: GPL-3.0-or-later */
+// Standalone DOM component. Styling comes from notice-card / pill / accent CSS.
+class NoticeCard {
+  constructor({ message = '', actions = [] } = {}) {
+    this.element = document.createElement('div'); this.element.className = 'notice-card';
+    this.element.setAttribute('role', 'alert');
+    this.message = document.createElement('p'); this.message.textContent = message;
+    const controls = document.createElement('div'); controls.className = 'actions';
+    this.buttons = actions.map(({ label, action, accent = false }) => {
+      const control = document.createElement('button'); control.type = 'button';
+      control.className = accent ? 'pill accent' : 'pill'; control.textContent = label;
+      control.addEventListener('click', action); controls.append(control); return control;
+    });
+    this.element.append(this.message, controls);
+  }
+  setMessage(message) { this.message.textContent = message; }
+}
+
 /* SPDX-License-Identifier: GPL-3.0-or-later */
 const page = typeof unsafeWindow === 'undefined' ? window : unsafeWindow;
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 const visible = element => Boolean(element && element.getClientRects().length && getComputedStyle(element).visibility !== 'hidden');
 const firstVisible = (selector, root = document) => [...root.querySelectorAll(selector)].find(visible) || null;
 const uuid = () => crypto.randomUUID();
+const queueFailure = (code, message) => Object.assign(new Error(message), { code });
 const ICONS = {
   down: '<path d="m4 6 4 4 4-4"/>', up: '<path d="m4 10 4-4 4 4"/>',
   trash: '<path d="M3 4h10M6 4V2h4v2M5 6v7m3-7v7m3-7v7M4 4l1 11h6l1-11"/>',
@@ -257,8 +334,26 @@ class ChatGPTAdapter {
   composer() { return this.editor()?.closest('[data-chatgpt-composer],form,[data-type="unified-composer"]') || this.editor()?.parentElement?.parentElement; }
   text() { const editor = this.editor(); return normalize(editor?.value ?? editor?.innerText ?? ''); }
   messages(role) {
-    const legacy = [...document.querySelectorAll(`[data-message-author-role="${role}"]`)];
-    return legacy.length ? legacy : [...document.querySelectorAll(`[data-content-search-unit-key$=":${role}"]`)];
+    const root = this.editor()?.closest('[data-request-input-activity-root],main,[role="main"]') || document;
+    const nodes = [...root.querySelectorAll(`[data-message-author-role="${role}"],[data-content-search-unit-key$=":${role}"]`)];
+    return nodes.filter(node => visible(node) && !nodes.some(other => other !== node && node.contains(other)));
+  }
+  messageText(node) { return normalize((node?.querySelector('[data-user-message-bubble] [data-search-result-target],[data-user-message-bubble]') || node)?.innerText || ''); }
+  receipt(active, text) {
+    const users = this.messages('user');
+    let found;
+    if (active.phase === 'waiting') found = users.find((node, index) => this.key(node, index + 1) === active.userKey && this.messageText(node) === normalize(text));
+    if (!found && Object.hasOwn(active, 'beforeUserKey')) {
+      const baseline = users.findIndex((node, index) => this.key(node, index + 1) === active.beforeUserKey);
+      if (baseline >= 0) found = users[baseline + 1];
+      if (found && this.messageText(found) !== normalize(text)) return { status: 'changed' };
+    }
+    if (!found && active.phase === 'waiting') {
+      const matches = users.filter(node => this.messageText(node) === normalize(text));
+      if (matches.length === 1) found = matches[0];
+    }
+    if (!found) return { status: 'pending' };
+    return { status: found === users.at(-1) ? 'accepted' : 'changed', userKey: this.key(found, users.indexOf(found) + 1) };
   }
   key(node, index) {
     if (!node) return null;
@@ -276,14 +371,14 @@ class ChatGPTAdapter {
     const busy = Boolean(stop || firstVisible('[data-is-streaming="true"],.result-streaming'));
     const finished = Boolean(turn?.querySelector('[data-testid="copy-turn-action-button"],[data-testid="good-response-turn-action-button"],[data-testid="bad-response-turn-action-button"]') ||
       (turn?.querySelector('.turn-action-controls button[aria-label="Copy"]') && turn?.querySelector('.turn-action-controls button[aria-label="Regenerate response"]')));
-    const errorNode = firstVisible('[role="alert"]', turn || document);
+    const errorNode = [...(turn || document).querySelectorAll('[role="alert"]')].find(node => visible(node) && !node.closest('#chatgpt-queue-accent,#chatgpt-queue-settings'));
     const errorText = errorNode?.textContent || '';
     const error = /something went wrong|network error|failed|limit|try again|出错|错误|上限|重试|失敗|限制/i.test(errorText)
       ? '页面提示出错或达到限制，请处理后继续。' : '';
     const attachments = Boolean(composer?.querySelector('[data-testid="file-upload-preview"],[data-testid="attachment"],[data-testid*="attachment-preview"],[data-composer-attachment],[data-composer-file-preview],button[aria-label^="Remove file"],button[aria-label^="Remove attachment"],img[src^="blob:"]'));
     const special = composer && /deep research|深入研究|深度研究|研究模式/i.test(composer.textContent || '');
     return {
-        userKey: this.key(user, users.length), userText: normalize((user?.querySelector('[data-user-message-bubble] [data-search-result-target],[data-user-message-bubble]') || user)?.innerText || ''),
+        userKey: this.key(user, users.length), userText: this.messageText(user), userCount: users.length,
       busy, complete: Boolean(assistant && finished && !busy),
       ready: Boolean(editor && this.conversation && route() === this.conversation && !special),
       draft: this.text(), attachments,
@@ -338,15 +433,15 @@ class ChatGPTAdapter {
     send.click();
     const ackDeadline = Date.now() + 12000;
     while (Date.now() < ackDeadline) {
-      if (route() !== this.conversation) throw new Error('发送期间切换了会话，请核对是否已发送。');
+      if (route() !== this.conversation) throw queueFailure('Q_SEND_ROUTE_CHANGED', '发送确认期间会话发生变化。');
       const after = this.snapshot();
       if (after.userKey && after.userKey !== before.userKey) {
-        if (after.userText !== normalize(text)) throw new Error('检测到不同的用户消息，请核对发送结果。');
+        if (after.userText !== normalize(text)) throw queueFailure('Q_ACK_MISMATCH', '页面出现了不匹配的用户消息。');
         return after.userKey;
       }
       await sleep(150);
     }
-    throw new Error('未能确认消息已发送；请核对聊天记录，勿直接重试。');
+    throw queueFailure('Q_ACK_TIMEOUT', '发送确认超时。');
   }
 }
 
@@ -400,7 +495,14 @@ class QueuePanel {
     this.host = document.createElement('div'); this.host.id = 'chatgpt-queue-accent';
     this.root = this.host.attachShadow({ mode: 'open' });
     const style = document.createElement('style'); style.textContent = QUEUE_CSS; this.root.append(style);
-    this.root.innerHTML += `<section aria-label="消息队列"><div class="recovery" hidden><p>上次发送结果需要核对。请查看聊天记录后选择：</p><div class="actions"></div></div><div class="error" role="alert" hidden></div><div class="list"></div><div class="footer"><span class="hint">Ctrl + Enter  Enqueue</span><div class="actions"></div></div></section>`;
+    const section = document.createElement('section'); section.setAttribute('aria-label', '消息队列');
+    section.innerHTML = `<div class="error" role="alert" hidden></div><div class="list"></div><div class="footer"><span class="hint">Ctrl + Enter  Enqueue</span><div class="actions"></div></div>`;
+    this.root.append(section);
+    this.faultCard = new NoticeCard({ actions: [
+      { label: '复制诊断', accent: true, action: () => actions.diagnostics?.() },
+      { label: '重新检测', action: () => actions.recheck?.() },
+    ] });
+    this.faultCard.element.hidden = true; section.prepend(this.faultCard.element);
     this.error = this.root.querySelector('.error');
     this.list = this.root.querySelector('.list');
     this.list.hidden = true;
@@ -410,10 +512,6 @@ class QueuePanel {
     this.cancel = button('取消编辑', () => actions.cancelEdit(), 'pill');
     this.cancel.title = '保留原生输入框中的文字，退出队列编辑'; this.cancel.hidden = true;
     this.queueActions.append(this.cancel, this.save);
-    this.root.querySelector('.recovery .actions').append(
-      button('已发送，移出', () => actions.resolve(true), 'pill accent'),
-      button('未发送，退回', () => actions.resolve(false), 'pill'),
-    );
     this.rows = new Map();
   }
   render(engine, owner, notice = '', editingId = null) {
@@ -421,11 +519,14 @@ class QueuePanel {
     this.list.hidden = !state.items.length;
     this.queueActions.hidden = !editingId;
     this.error.textContent = notice;
-    this.error.hidden = !notice || !state.items.length;
+    this.error.hidden = !notice || !state.items.length || Boolean(state.fault);
     this.save.disabled = !owner; this.save.hidden = !editingId;
     this.cancel.hidden = !editingId; this.cancel.disabled = !owner;
-    this.root.querySelector('.recovery').hidden = !engine?.recovery || !state.items.length;
-    for (const control of this.root.querySelectorAll('.recovery button')) control.disabled = !owner || engine?.running;
+    this.faultCard.element.hidden = !state.fault;
+    this.faultCard.setMessage(state.fault ? `队列执行出错（${state.fault.code}），自动发送已停止。` : '');
+    this.faultCard.buttons[1].disabled = !owner || Boolean(engine?.running);
+    this.host.dataset.cqError = state.fault?.code || '';
+    this.host.dataset.cqOwner = String(owner);
     const ids = new Set(state.items.map(item => item.id));
     for (const [id, row] of this.rows) if (!ids.has(id)) { row.remove(); this.rows.delete(id); }
     state.items.forEach((item, index) => {
@@ -517,7 +618,7 @@ class QueueSettings {
 
 // Export only in the local test harness, never through a page-controlled bridge.
 if (typeof module !== 'undefined' && module.exports && typeof process !== 'undefined') {
-  module.exports = { ChatGPTAdapter, QueuePanel, WideLayout, NativeQueueInput, enqueueShortcut, QueueSettings };
+  module.exports = { ChatGPTAdapter, QueuePanel, WideLayout, NativeQueueInput, enqueueShortcut, QueueSettings, NoticeCard };
 } else {
   bootQueue().catch(error => console.error('[ChatGPT Queue] Initialization failed:', error));
 }
@@ -543,14 +644,24 @@ async function bootQueue() {
     try { notice = ''; callback(); render(); }
     catch (error) { notice = error.message; render(); }
   }
+  function reportFault(fault) {
+    console.error(`[ChatGPT Queue][${fault.code}]`, JSON.stringify(fault));
+    page.document.dispatchEvent(new page.CustomEvent('chatgpt-queue:error', { detail: JSON.stringify(fault) }));
+  }
   const panel = new QueuePanel({
     capture: () => act(() => input.capture()),
     edit: id => act(() => input.edit(id)), cancelEdit: () => act(() => input.cancel()),
     remove: id => act(() => engine.remove(id)), move: (id, delta) => act(() => engine.move(id, delta)),
-    resolve: sent => act(() => {
-      if (!sent && !window.confirm('请确认聊天记录中没有这条消息。退回后再次运行可能重复发送。')) return;
-      engine.resolve(sent);
-    }),
+    diagnostics: () => {
+      try {
+        GM_setClipboard(JSON.stringify({ ...engine.diagnostics(), scriptVersion: '1.6.0', owner }, null, 2), 'text');
+        panel.faultCard.buttons[0].textContent = '诊断已复制';
+      } catch (error) {
+        panel.faultCard.setMessage(`复制诊断失败（${engine.state.fault?.code || 'Q_DIAGNOSTIC_COPY_FAILED'}）。`);
+        console.error('[ChatGPT Queue][Q_DIAGNOSTIC_COPY_FAILED]');
+      }
+    },
+    recheck: () => act(() => engine.recheck()),
   });
   const layoutListener = GM_addValueChangeListener(layoutKey, (_key, _old, value, remote) => {
     if (remote) { layout.enabled = Boolean(value); layout.update(adapter); settings.sync(layout.enabled); }
@@ -571,7 +682,7 @@ async function bootQueue() {
     const targetKey = storageKey;
     adapter = new ChatGPTAdapter(id);
     layout.update(adapter);
-    engine = new QueueEngine({ saved: GM_getValue(targetKey, null), save: state => GM_setValue(targetKey, state), adapter, changed: render });
+    engine = new QueueEngine({ saved: GM_getValue(targetKey, null), save: state => GM_setValue(targetKey, state), adapter, changed: render, onError: reportFault });
     input = new NativeQueueInput(engine, adapter);
     listener = GM_addValueChangeListener(targetKey, (_key, _old, value, remote) => {
       if (remote && !owner && token === generation) {
@@ -595,7 +706,7 @@ async function bootQueue() {
         GM_setValue(targetKey, migrate); GM_setValue(keyFor(null), emptyState());
       }
       owner = true;
-      engine = new QueueEngine({ saved: GM_getValue(targetKey, null), save: state => GM_setValue(targetKey, state), adapter, changed: render });
+      engine = new QueueEngine({ saved: GM_getValue(targetKey, null), save: state => GM_setValue(targetKey, state), adapter, changed: render, onError: reportFault });
       input = new NativeQueueInput(engine, adapter);
       engine.commit(); notice = ''; render(); acquired(true);
       return held;
@@ -626,7 +737,7 @@ async function bootQueue() {
     if (owner && target?.matches(STOP_SELECTOR)) {
       act(() => engine.pause('你已停止回答；队列同时暂停。'));
     }
-    if (owner && target === adapter.sendButton() && engine.state.active?.phase !== 'submitting' && (input.editingId || engine.state.items.length || adapter.snapshot().busy)) {
+    if (owner && target && target === adapter.sendButton() && engine.state.active?.phase !== 'submitting' && (input.editingId || engine.state.items.length || adapter.snapshot().busy)) {
       event.preventDefault(); event.stopImmediatePropagation(); panel.actions.capture();
     }
   }, true);

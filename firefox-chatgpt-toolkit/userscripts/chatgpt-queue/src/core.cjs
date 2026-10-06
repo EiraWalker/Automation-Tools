@@ -2,21 +2,25 @@
 'use strict';
 
 const normalize = value => String(value ?? '').replace(/\r\n?/g, '\n').replace(/\u00a0/g, ' ').trim();
-const emptyState = () => ({ version: 1, items: [], active: null, paused: true, reason: '' });
+const emptyState = () => ({ version: 1, items: [], active: null, paused: true, reason: '', fault: null });
 
 class QueueEngine {
-  constructor({ saved, save, adapter, changed = () => {}, now = Date.now, id = () => crypto.randomUUID() }) {
+  constructor({ saved, save, adapter, changed = () => {}, onError = () => {}, now = Date.now, id = () => crypto.randomUUID() }) {
     this.state = saved?.version === 1 ? structuredClone(saved) : emptyState();
     this.state.paused = true;
-    this.state.reason = this.state.active ? '上次发送尚未核对，请先处理该条消息。' : '';
+    this.state.fault = this.state.fault || null;
+    this.state.reason = this.state.fault ? '队列执行出错，自动发送已停止。' : '';
     this.save = save;
     this.adapter = adapter;
     this.changed = changed;
+    this.onError = onError;
     this.now = now;
     this.id = id;
     this.running = false;
     this.disposed = false;
-    this.recovery = Boolean(this.state.active);
+    this.recovery = false;
+    this.needsReconcile = Boolean(this.state.active);
+    this.reconcileSince = null;
     this.expectedUser = null;
     this.stableSince = null;
     this.epoch = 0;
@@ -27,10 +31,13 @@ class QueueEngine {
     // Persist before a click. A failed write must prevent any dispatch.
     try { this.save(structuredClone(this.state)); }
     catch (error) {
+      const reported = this.state.fault?.code === 'Q_STORAGE_FAILED';
+      this.state.fault = { code: 'Q_STORAGE_FAILED', stage: 'persist', at: this.now(), phase: this.state.active?.phase || null };
       this.state.paused = true;
       this.state.reason = '保存失败，已暂停；请勿刷新页面。';
       this.status = this.state.reason;
       this.changed(this);
+      if (!reported) this.onError(structuredClone(this.state.fault));
       throw error;
     }
     this.changed(this);
@@ -70,11 +77,12 @@ class QueueEngine {
   }
 
   resume() {
-    if (this.recovery) throw new Error('请先核对上次发送是否成功。');
+    if (this.needsReconcile) this.reconcile();
+    if (this.state.fault || this.needsReconcile) throw new Error(this.state.fault ? `队列错误：${this.state.fault.code}` : '正在读取页面消息记录。');
     if (!this.state.items.length) return;
     const snapshot = this.adapter.snapshot();
     if (snapshot.error) throw new Error(snapshot.error);
-    this.expectedUser = snapshot.userKey;
+    this.expectedUser = this.state.active?.userKey || snapshot.userKey;
     this.state.paused = false;
     this.state.reason = '';
     this.status = '等待当前回答结束';
@@ -91,12 +99,56 @@ class QueueEngine {
     this.commit();
   }
 
-  resolve(sent) {
-    if (!this.recovery || this.running) return;
-    if (sent) this.state.items = this.state.items.filter(item => item.id !== this.state.active?.id);
-    this.state.active = null;
-    this.recovery = false;
-    this.pause(sent ? '已移出该条；请确认上一轮已结束再继续。' : '已退回队列，请确认不会重复发送再继续。');
+  diagnostics(snapshot = this.adapter.snapshot()) {
+    return { schemaVersion: 1, fault: this.state.fault, queueLength: this.state.items.length,
+      phase: this.state.active?.phase || null, paused: this.state.paused,
+      signals: { ready: Boolean(snapshot.ready), busy: Boolean(snapshot.busy), complete: Boolean(snapshot.complete),
+        attachments: Boolean(snapshot.attachments), pageError: Boolean(snapshot.error),
+        userCount: snapshot.userCount ?? null, draftLength: snapshot.draft?.length || 0,
+        receivedLength: snapshot.userText?.length ?? null } };
+  }
+
+  fail(code, stage, snapshot = this.adapter.snapshot()) {
+    const previous = this.state.fault?.code;
+    if (previous === code && this.state.fault.stage === stage) return;
+    const signals = this.diagnostics(snapshot).signals;
+    this.state.fault = { code, stage, at: this.now(), phase: this.state.active?.phase || null,
+      hasBaseline: Boolean(this.state.active && Object.hasOwn(this.state.active, 'beforeUserKey')), signals };
+    this.needsReconcile = Boolean(this.state.active);
+    this.pause(`队列执行出错（${code}），自动发送已停止。`);
+    if (previous !== code) this.onError(structuredClone(this.state.fault));
+  }
+
+  reconcile(snapshot = this.adapter.snapshot()) {
+    const active = this.state.active;
+    if (!active || this.running || this.disposed) return;
+    if (active.phase === 'preparing') {
+      this.state.active = null; this.state.fault = null; this.needsReconcile = false;
+      this.commit(); return;
+    }
+    if (snapshot.error) { this.fail('Q_PAGE_ERROR', 'restore', snapshot); return; }
+    if (!snapshot.ready) return;
+    const item = this.state.items.find(item => item.id === active.id);
+    if (!item) { this.fail('Q_STATE_INVALID', 'restore', snapshot); return; }
+    const receipt = this.adapter.receipt ? this.adapter.receipt(active, item.text) :
+      { status: active.phase === 'waiting' && snapshot.userKey === active.userKey ? 'accepted' : 'pending', userKey: snapshot.userKey };
+    if (receipt.status === 'accepted') {
+      this.state.active = { ...active, phase: 'waiting', userKey: receipt.userKey };
+      this.expectedUser = receipt.userKey; this.state.fault = null; this.state.reason = '';
+      this.needsReconcile = false; this.reconcileSince = null; this.commit(); return;
+    }
+    if (receipt.status === 'changed') { this.fail('Q_CONTEXT_CHANGED', 'restore', snapshot); return; }
+    if (this.reconcileSince === null) this.reconcileSince = this.now();
+    if (this.now() - this.reconcileSince >= 12000 && !this.state.fault) this.fail('Q_RECEIPT_MISSING', 'restore', snapshot);
+  }
+
+  recheck() {
+    if (this.running || this.disposed) return;
+    if (this.state.active) { this.needsReconcile = true; this.reconcile(); }
+    else {
+      const snapshot = this.adapter.snapshot();
+      if (snapshot.ready && !snapshot.error) { this.state.fault = null; this.state.reason = ''; this.commit(); }
+    }
   }
 
   settled(snapshot) {
@@ -109,16 +161,19 @@ class QueueEngine {
   }
 
   async tick() {
-    if (this.running || this.disposed || this.state.paused || !this.state.items.length) return;
+    if (this.running || this.disposed) return;
+    if (this.needsReconcile) { this.reconcile(); return; }
+    if (this.state.paused || !this.state.items.length) return;
     this.running = true;
     try {
       const snapshot = this.adapter.snapshot();
-      if (snapshot.error) { this.pause(snapshot.error); return; }
+      if (snapshot.error) { this.fail('Q_PAGE_ERROR', 'page', snapshot); return; }
       const active = this.state.active;
       if (active) {
         if (snapshot.userKey !== active.userKey) {
-          this.recovery = true;
-          this.pause('会话内容已改变，请核对正在处理的消息。');
+          this.needsReconcile = true;
+          this.running = false;
+          this.reconcile(snapshot);
           return;
         }
         if (this.settled(snapshot)) {
@@ -141,7 +196,7 @@ class QueueEngine {
 
       const item = this.state.items[0];
       const epoch = this.epoch;
-      this.state.active = { id: item.id, phase: 'preparing', userKey: null };
+      this.state.active = { id: item.id, phase: 'preparing', userKey: null, beforeUserKey: snapshot.userKey };
       this.commit();
       const valid = () => !this.disposed && !this.state.paused && epoch === this.epoch;
       try {
@@ -149,15 +204,17 @@ class QueueEngine {
           this.state.active.phase = 'submitting';
           this.commit();
         });
-        this.state.active = { id: item.id, phase: 'waiting', userKey };
+          this.state.active = { ...this.state.active, phase: 'waiting', userKey };
         this.expectedUser = userKey;
         this.stableSince = null;
         this.status = '等待本条回答结束';
         this.commit();
       } catch (error) {
-        if (this.state.active?.phase === 'preparing') this.state.active = null;
-        else this.recovery = true;
-        this.pause(error.message || '发送结果未知，请核对后再继续。');
+          if (this.state.active?.phase === 'preparing') {
+            this.state.active = null;
+            if (!valid()) this.pause(error.message);
+            else this.fail(error.code || 'Q_SEND_PREPARE_FAILED', 'prepare');
+          } else this.fail(error.code || 'Q_SEND_FAILED', 'acknowledge');
       }
     } finally {
       this.running = false;

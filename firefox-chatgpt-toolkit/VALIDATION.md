@@ -6,19 +6,19 @@
 
 | 检查 | 结果 | 实际验证范围 |
 | --- | --- | --- |
-| ChatGPT Queue `npm test` | 37/37 通过 | 队列状态机、忙闲识别、原生编辑器、草稿保护、主题/布局、快捷键与 UI |
-| 生成脚本语法与重建 | 通过 | `npm run check`、`node build.cjs`；生成产物与本次会话最终 1.5.4 一致 |
-| Firefox 自动化 `npm test` | 10/10 通过 | jsdom 页面守卫、编辑器更新、草稿恢复、HTTP 文件服务、文件 RPC 并发、假 MCP 的超时与不重放 |
+| ChatGPT Queue `npm test` | 46/46 通过 | 队列状态机、忙闲识别、原生编辑器、草稿保护、主题/布局、快捷键与 UI |
+| 生成脚本语法与重建 | 通过 | `npm run check`、`node build.cjs`；生成产物与本次会话最终 1.6.0 一致 |
+| Firefox 自动化 `npm test` | 11/11 通过 | jsdom 页面守卫、编辑器更新、草稿恢复、HTTP 文件服务、文件 RPC 并发、假 MCP 的超时与不重放 |
 | Native policy / parser | PowerShell 5.1 和 7 均通过 | 完整 URL 匹配、代码 SHA-256、HWND 格式、脚本解析 |
-| `-LiveReadOnly` | 两个 PowerShell 版本均通过 | 发现 3 个当前 Firefox 窗口；只读操作不改变前台，错误目标拒绝且不抢占前台 |
+| `-LiveReadOnly` | 两个 PowerShell 版本均通过 | 发现 4 个当前 Firefox 窗口；只读操作不改变前台，错误目标拒绝且不抢占前台 |
 | 截图适配器 unittest | 7/7 通过 | JSON envelope、退出码、无 shell 启动、超时和 EXE 解析 |
-| 已安装 AgentCapture 1.0.0 | help / 窗口发现通过 | 新目录中的适配器可读取当前 Firefox 窗口；打包时未新拍用户网页截图 |
+| 已安装 AgentCapture 1.0.0 | help / 窗口发现通过 | 已安装 AgentCapture 完成真实后台 WGC 截图，查看错误卡片和最终恢复页面；前台窗口未改变 |
 | 三个 SKILL.md | quick_validate 均通过 | YAML name/description 和 skill 格式 |
 
 生成脚本 SHA-256：
 
 ```text
-f3979eec383b20b936d100688c0478dccdbf300427dc9c12fee29f826967e4d1
+931ef9ca053a52e94cbb415ae6a95875f03007e35a3387d62c0fd97cd6126dad
 ```
 
 ## 本次开发会话的真实网页验收
@@ -30,9 +30,10 @@ f3979eec383b20b936d100688c0478dccdbf300427dc9c12fee29f826967e4d1
 - 1.5.1：空队列的 `Ctrl + Enter  Enqueue` 提示持续显示，队列列表与操作按钮隐藏。
 - 1.5.2 / 1.5.3：夜间配置面板跟随实际网页样式。1.5.3 的面板与网页背景同为 `#0e0e0e`，文字对比度 16.49:1；有效 Accent color 来自页面主题。
 - 1.5.4：真实非空队列中没有“加入队列”按钮，快捷键提示可见。最终后台截图尝试遇到窗口最小化，未把该尝试报告为截图成功。
+- 1.6.0：正式安装源码的 SHA-256 与产物一致。旧故障会话四条记录中已接收的一条没有重发，剩余三条自动接续，最终持久化队列为空。受控页面错误得到 Q_PAGE_ERROR，真实诊断复制/重新检测/删除按钮通过，测试条目未发送并已移除；圆框和双色按钮通过后台截图确认。详细步骤见 [队列验收](userscripts/chatgpt-queue/VALIDATION.md)。
 - 会话全宽实测：会话容器 1130px，消息区从 808px 扩展到 1130px；输入框与队列从 768px 扩展到 1090px，保留原生边距；关闭设置后恢复。
 
-真实网页会持续更新。这些结果支持当时的页面版本，不保证未来 DOM 标记保持不变。新目录里的 PowerShell 工具是在原有会话方案上整理、增加守卫与独立测试后的版本；打包期间只进行了只读窗口发现和拒绝目标测试，没有重新发送 ChatGPT 消息或全面重测所有 UIA Action。
+真实网页会持续更新。这些结果支持当时的页面版本，不保证未来 DOM 标记保持不变。本次使用目录中的 PowerShell 工具在真实原生 Firefox 完成精确标签选择、Console 真实粘贴与哈希核验、油猴更新和源码核验、刷新、原生 Ctrl+Enter 恢复队列、诊断按钮和清理调试页。CodeMirror 的隐藏 Value、CSP eval 限制和按钮为空的点击拦截均有真实证据。`--inline` 生成器增加了 Unicode/连续空格源码保真的测试；完整生成器流程未另做真实安装重测。没有全面验证所有 UIA Action，NewTab 等控件的 Invoke 支持取决于 Firefox 的实际标记。
 
 ## MCP 的边界
 
