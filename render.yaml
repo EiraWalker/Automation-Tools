@@ -1,0 +1,28 @@
+services:
+- type: web
+  name: automation-tools-bundlefoundry
+  runtime: python
+  rootDir: bundlefoundry
+  plan: starter
+  region: singapore
+  buildCommand: pip install -r requirements.txt
+  startCommand: python server.py
+  healthCheckPath: /health
+  disk:
+    name: bundlefoundry-state
+    mountPath: /var/data
+    sizeGB: 1
+  envVars:
+  - key: PYTHON_VERSION
+    value: 3.12.10
+  - key: STATE_DIR
+    value: /var/data
+  - key: POLL_SECONDS
+    value: '43200'
+  - key: CONTINUOUS_POLLING_ENABLED
+    value: 'true'
+  - key: CREDENTIAL_KEY
+    sync: false
+  - key: CREDENTIALS_ENCRYPTED
+    sync: false
+  branch: main
