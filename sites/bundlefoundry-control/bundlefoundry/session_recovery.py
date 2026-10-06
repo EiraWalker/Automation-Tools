@@ -29,6 +29,12 @@ class InteractiveLoginRequired(NeedsLogin):
     pass
 
 
+class BrowserRuntimeUnavailable(RetryLater):
+    def __init__(self, code):
+        super().__init__("browser runtime unavailable")
+        self.code = code
+
+
 def pack_profile(profile):
     """Archive only session files, after the Chromium process has exited."""
     data = io.BytesIO()
@@ -66,23 +72,40 @@ def unpack_profile(data, root):
 
 def prepare_browser_runtime():
     """Provision Chromium on hosts whose existing build command only installs pip deps."""
-    from playwright.sync_api import sync_playwright
     explicit = os.getenv("GOOGLE_BROWSER_EXECUTABLE")
     if explicit:
         if not Path(explicit).is_file():
             raise RetryLater("configured browser unavailable")
         return explicit
     with _install_lock:
-        with sync_playwright() as playwright:
-            executable = playwright.chromium.executable_path
-        if not Path(executable).is_file():
+        dry = subprocess.run([sys.executable, "-m", "playwright", "install", "--dry-run", "chromium", "--only-shell"],
+                             capture_output=True, text=True, timeout=15)
+        location = re.search(r"Install location:\s+([^\r\n]+)", dry.stdout)
+        if dry.returncode or not location:
+            raise BrowserRuntimeUnavailable("browser_registry_unavailable")
+        directory = Path(location.group(1).strip())
+        if not directory.exists():
             try:
-                subprocess.run([sys.executable, "-m", "playwright", "install", "chromium"],
-                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                               check=True, timeout=120)
-            except (OSError, subprocess.SubprocessError):
-                raise RetryLater("browser runtime unavailable") from None
-        return executable
+                install = subprocess.run([sys.executable, "-m", "playwright", "install", "chromium", "--only-shell"],
+                                         capture_output=True, text=True, timeout=90)
+                if install.returncode:
+                    output = (install.stdout + install.stderr).lower()
+                    code = next((name for word, name in [
+                        ("certificate", "browser_download_certificate_error"),
+                        ("403", "browser_download_rejected"),
+                        ("enospc", "browser_download_disk_full"),
+                        ("timed out", "browser_download_timeout"),
+                        ("timeout", "browser_download_timeout"),
+                    ] if word in output), "browser_download_failed")
+                    raise BrowserRuntimeUnavailable(code)
+            except subprocess.TimeoutExpired:
+                raise BrowserRuntimeUnavailable("browser_download_timeout") from None
+            except OSError:
+                raise BrowserRuntimeUnavailable("browser_download_process_failed") from None
+        if not directory.exists():
+            raise BrowserRuntimeUnavailable("browser_download_incomplete")
+        # Playwright selects the matching headless shell when no executable is overridden.
+        return None
 
 
 def browser_login(account, archive, cipher, *, timeout=65, context_options=None):
@@ -96,7 +119,7 @@ def browser_login(account, archive, cipher, *, timeout=65, context_options=None)
         cookies = None
         with sync_playwright() as playwright:
             context = playwright.chromium.launch_persistent_context(
-                str(profile), executable_path=executable, headless=True,
+                str(profile), **({"executable_path": executable} if executable else {}), headless=True,
                 args=["--no-sandbox", "--disable-dev-shm-usage", "--password-store=basic"],
                 **(context_options or {}))
             try:

@@ -114,7 +114,7 @@ def main():
                 status.report(browser_runtime_ready=True)
             except Exception as error:
                 logging.warning("browser provision issue=%s", type(error).__name__)
-                status.report(browser_runtime_ready=False)
+                status.report(browser_runtime_ready=False, browser_runtime_error_code=getattr(error, "code", "browser_provision_failed"))
         threading.Thread(target=prepare_browser, name="browser-provision", daemon=True).start()
     logging.info("service listening; Google authorization is required before claims can run")
     try:
