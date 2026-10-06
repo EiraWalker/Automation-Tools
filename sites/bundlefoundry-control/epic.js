@@ -167,8 +167,11 @@ export class EpicAPI {
     throw new EpicError('ownership_unavailable');
   }
   async preview(session, game) {
-    const url = new URL('https://ue-launcher-website-prod.ol.epicgames.com/purchase');
-    url.search = new URLSearchParams({showNavigation:'true',namespace:game.namespace,offers:game.id});
+    // The former UE launcher portal now redirects to Unreal Engine. Use the
+    // payment service's purchase page, keeping the bearer on this fixed host.
+    const url = new URL(PAYMENT);
+    url.search = new URLSearchParams({showNavigation:'true',namespace:game.namespace,
+      offers:`1-${game.namespace}-${game.id}`});
     const html = await this.request(url.href,{headers:this.auth(session)},true);
     const input = html.match(/<input\b[^>]*\bid=["']purchaseToken["'][^>]*>/i)?.[0];
     const purchaseToken = input?.match(/\bvalue=["']([^"']+)["']/i)?.[1];

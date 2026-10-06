@@ -243,7 +243,7 @@ test('Worker + real SQLite: owner connect, cloud run, atomic checkpoint, readbac
       price:{totalPrice:{discountPrice:0,originalPrice:100}},promotions:{promotionalOffers:[{promotionalOffers:[{
         startDate:game.starts_at,endDate:game.ends_at,discountSetting:{discountPercentage:0}}]}]}}]}}}});
     if(url.includes('/entitlements?')) return Response.json(confirmed?[entitlement]:[]);
-    if(url.includes('ue-launcher-website')) return new Response('<input id="purchaseToken" value="test-purchase">');
+    if(url.includes('payment-website-pci.ol.epicgames.com/purchase?')) return new Response('<input id="purchaseToken" value="test-purchase">');
     if(url.endsWith('/order-preview')) return Response.json(preview());
     if(url.endsWith('/confirm-order')) {assert.equal(JSON.parse(options.body).totalAmount,0);confirmed=true;return Response.json({confirmation:{orderId:'test-order'}});}
     throw Error('unexpected endpoint');

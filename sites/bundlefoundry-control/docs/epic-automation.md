@@ -80,6 +80,8 @@ Epic 每周领取步骤不读取 Gmail，也不改变每天两次的邮箱检查
 原生 OAuth 与权益读取参照 [Legendary](https://github.com/derrod/legendary)，
 订单协议参照 [node-epicgames-client](https://github.com/Revadike/node-epicgames-client)。
 内部商店结账协议可能发生变化；当前实现严格拒绝未知订单结构，须在真实账号授权后核实兼容性。
+原有 UE Launcher 购买入口已重定向至 Unreal Engine；实现使用固定的 Epic Payment purchase 页面获取订单 nonce，
+继续由经过授权的预览、确认接口及账号权益核验决定结果。尚未取得真实 Epic 授权时，不能把该接口的兼容性当作已验证。
 若云端被要求使用完整交互式结账，应另实现由私有 Sites OAuth 保护的浏览器流程，不能把公开共享令牌页面作为替代。
 
 云端预览验证曾发现 Node 与 Worker 原生 `fetch` 的接收者要求不同：把函数保存在实例上直接调用时，
