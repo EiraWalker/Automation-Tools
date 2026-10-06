@@ -1,6 +1,6 @@
 # Epic 每周免费游戏
 
-Epic 与 BundleFoundry 复用同一个所有者私有的 ChatGPT Site 和每日两次的任务。
+Epic 与 BundleFoundry 复用同一个所有者私有的 ChatGPT Site，使用不同的领取定时任务。
 Epic 的 HTTP 请求直接由 Sites Worker 执行；Render 继续处理 BundleFoundry。
 两种服务分别保存状态、凭据和运行锁，互不覆盖。
 
@@ -13,7 +13,7 @@ Epic 的 HTTP 请求直接由 Sites Worker 执行；Render 继续处理 BundleFo
 | ChatGPT Sites | 用 Sites OAuth 限制所有者访问；运行 Worker；保管秘密运行时配置 |
 | Sites 接入的 Cloudflare D1 | 保存 `epic_state` 加密令牌及订单恢复记录；保存不含令牌的 `epic_snapshot` 页面状态 |
 | Sites 运行时秘密变量 | `EPIC_CREDENTIAL_KEY` 保存独立的 32 字节 AES-GCM 密钥；`EPIC_CLIENT_SECRET` 保存所选原生 OAuth 客户端的配置 |
-| ChatGPT 关联任务 | 每日台北时间 09:00、21:00 调用两项服务；页面关闭时仍可运行 |
+| ChatGPT 关联任务 | 资产包每日台北时间 09:00、21:00；Epic 每周五 09:00；每日任务只为 Epic 续期凭据 |
 | Render | 仅处理已有 BundleFoundry 任务；不会收到 Epic 代码、令牌或密钥 |
 
 ```mermaid
@@ -22,7 +22,7 @@ flowchart TB
     User -->|"密码、两步验证码"| Epic["Epic Games：官方登录、限免目录、订单和游戏权益"]
     Epic -->|"一次性授权代码"| User
     User -->|"仅向私有 Site 提交代码"| Site
-    Task["ChatGPT：每天两次的关联任务"] -->|"平台服务认证调用"| Site
+    Task["ChatGPT：资产包每日任务、Epic 每周任务"] -->|"平台服务认证调用"| Site
     Secret["Sites 秘密配置：独立 AES-GCM 密钥"] --> Site
     Site <-->|"OAuth 换码、续期；免费订单；权益核验"| Epic
     Site <-->|"加密令牌、恢复记录；安全摘要"| D1[("Cloudflare D1：由 Sites 接入")]
@@ -46,7 +46,7 @@ Epic 密钥不复用 BundleFoundry 的 Fernet 密钥，不进入公开 GitHub �
    构建将 Worker、`epic.js` 与 `ui.js` 打包为单个 Worker 入口，避免云端遗漏依赖模块。
 4. 在私有页面点击“打开 Epic 官方登录”，登录后将官方返回的 `authorizationCode` 或包含它的 JSON
    粘贴进本站。代码会从输入框立即清除；换码后显示 Epic 账号名称和实际国家。
-5. 更新现有的关联任务，在 BundleFoundry 步骤之外独立执行下列 Epic 步骤；任一服务失败不取消另一项服务。
+5. 保持 BundleFoundry 每日两次的关联任务，只追加 Epic 凭据续期；另外建立 Epic 每周五 09:00 的独立领取任务，不能在每日任务中领取 Epic 游戏。
 
 API 全部位于私有 Sites dispatch 后。`POST /api/epic/connect` 与 `/api/epic/disconnect`
 额外要求 Sites 注入的完整所有者身份、同源 Origin 和 JSON 请求，拒绝仅有平台服务权限的调用。
@@ -55,13 +55,13 @@ API 全部位于私有 Sites dispatch 后。`POST /api/epic/connect` 与 `/api/e
 任务通过 fresh `get_site` 获取实际 URL 和平台服务认证；向该 Site 的 `/api/epic/run`
 发送 JSON `{}`，随后 GET `/api/epic/status` 回读。
 只向此 Site 发送 `OAI-Sites-Authorization`，不在任务提示或日志中保存其值。
-Epic 步骤不读取 Gmail，也不改变每天两次的邮箱检查频率。
+Epic 每周领取步骤不读取 Gmail，也不改变每天两次的邮箱检查频率。每日任务另外 POST `/api/epic/refresh` 发送 `{}`，只轮换并加密保存令牌，不查询促销、不提交订单。两种 Epic 操作共用同一个 lease，防止周五 09:00 并发；冲突时等另一项操作完成再运行，不重复提交订单。
 
 ## 每次运行与技术限制
 
 - 未连接时只展示台湾地区的公开限免预览。连接后按 Epic 官方账号国家查询当前有效促销，
   只接受原价大于零、现价为零、仍在促销窗口内的基础游戏，排除 DLC、未来促销与永久免费游戏。
-- 每次运行先更新刷新令牌，再原子保存加密状态，然后读取账号资料和游戏权益。
+- 每周领取先更新刷新令牌，再原子保存加密状态，然后读取账号资料和游戏权益；每日仅续期的入口不调用游戏或订单接口。
   使用 Epic 返回的真实令牌到期时间，不能人为改为一个月。
   如果刷新有效期不足 13 小时，私有页面显示警告；需要根据实测增加独立续期任务，不能擅自增加 Gmail 检查次数。
 - 已拥有的游戏不提交订单。订单预览必须匹配账号、国家、namespace 和唯一 offer，

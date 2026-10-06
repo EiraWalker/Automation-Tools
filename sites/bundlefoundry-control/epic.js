@@ -224,6 +224,21 @@ export class EpicService {
     return summary(state);
   }
   async disconnect() { await this.save(null); return summary(null); }
+  async renew(state) {
+    if (Date.parse(state.session.refresh_expires_at) <= Date.now()) throw new EpicError('login_required');
+    const session=await this.api.token('refresh_token',state.session.refresh_token);
+    if(session.account_id!==state.account.id) throw new EpicError('login_required');
+    state.session=session;state.refreshed_at=new Date().toISOString();
+    await this.save(state);
+    return session;
+  }
+  async refresh() {
+    const state=await this.load();
+    if(!state) return summary(null);
+    try { await this.renew(state); }
+    catch(error) { state.status=error instanceof EpicError?error.code:'epic_unavailable';await this.save(state); }
+    return summary(state);
+  }
   recordOwned(state, game, attempted) {
     const key = `${game.namespace}:${game.id}`;
     const at = new Date().toISOString();
@@ -241,13 +256,9 @@ export class EpicService {
       await this.repository.save(null,view); return view;
     }
     try {
-      if (Date.parse(state.session.refresh_expires_at) <= Date.now()) throw new EpicError('login_required');
-      // Always rotate before the twice-daily run, persisting new refresh tokens
+      // Always rotate before the weekly claim, persisting new refresh tokens
       // before any subsequent request can fail.
-      const session = await this.api.token('refresh_token',state.session.refresh_token);
-      if (session.account_id !== state.account.id) throw new EpicError('login_required');
-      state.session = session; state.refreshed_at = new Date().toISOString();
-      await this.save(state);
+      const session=await this.renew(state);
       state.account = await this.api.profile(session);
       state.games = await this.api.catalog(state.account.country);
       let owned = await this.api.entitlements(session);

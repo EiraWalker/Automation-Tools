@@ -26,8 +26,8 @@ function isOwner(request,env) {
 
 async function epicRoute(request,env,path) {
   if(path==='/api/epic/status' && request.method==='GET') return json(await read(env,'epic_snapshot') || summary(null));
-  if(request.method!=='POST' || !['/api/epic/connect','/api/epic/disconnect','/api/epic/run'].includes(path)) return json({error:'not_found'},404);
-  const interactive = path !== '/api/epic/run';
+  if(request.method!=='POST' || !['/api/epic/connect','/api/epic/disconnect','/api/epic/run','/api/epic/refresh'].includes(path)) return json({error:'not_found'},404);
+  const interactive = ['/api/epic/connect','/api/epic/disconnect'].includes(path);
   // Credential changes require a real Sites-authenticated owner, never merely
   // an identity-less cloud service request. Dispatch supplies these headers.
   if(interactive && !isOwner(request,env)) return json({error:'forbidden'},403);
@@ -54,6 +54,7 @@ async function epicRoute(request,env,path) {
     const service=new EpicService(repository,env.EPIC_CREDENTIAL_KEY,new EpicAPI(env.EPIC_CLIENT_SECRET));
     if(path==='/api/epic/connect') return json(await service.connect(body.code));
     if(path==='/api/epic/disconnect') return json(await service.disconnect());
+    if(path==='/api/epic/refresh') return json(await service.refresh());
     return json(await service.run());
   } catch(error) {
     const code=error instanceof EpicError?error.code:'epic_unavailable';

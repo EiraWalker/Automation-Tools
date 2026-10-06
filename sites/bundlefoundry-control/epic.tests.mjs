@@ -84,6 +84,15 @@ test('already-owned games never invoke checkout or fulfill new-claim acceptance'
   assert.equal(result.results[0].status,'already_owned');assert.equal(result.project_acceptance_complete,false);
 });
 
+test('daily credential maintenance rotates tokens without catalog, ownership or checkout requests',async()=>{
+  const f=fixture();await f.service.connect('a'.repeat(32));
+  for(const method of ['catalog','profile','entitlements','preview','confirm']) f.api[method]=async()=>{throw Error('maintenance must not call '+method);};
+  f.api.token=async()=>({...session,refresh_token:'MAINTENANCE_REFRESH'});
+  const result=await f.service.refresh();assert.equal(result.status,'ready');
+  assert.equal((await f.service.load()).session.refresh_token,'MAINTENANCE_REFRESH');
+  assert.equal(result.project_acceptance_complete,false);assert.equal(f.confirms(),0);
+});
+
 test('unsafe preview prevents confirmation without creating pending mutation',async()=>{
   const f=fixture();await f.service.connect('a'.repeat(32));
   f.api.preview=async()=>{const p=preview();p.orderResponse.totalPrice=99;return {preview:p};};
@@ -199,6 +208,8 @@ test('Worker + real SQLite: owner connect, cloud run, atomic checkpoint, readbac
   try {
     db.prepare('INSERT INTO automation_state VALUES (?,?,?)').run('snapshot',JSON.stringify({project_acceptance_complete:true,results:[],last_success_at:'2026-01-01'}),Date.now());
     assert.equal((await call('/api/epic/connect',{code:'a'.repeat(32)},true)).status,200);
+    assert.equal((await call('/api/epic/refresh',{})).status,200);
+    assert.equal(confirmed,false);
     const run=await call('/api/epic/run',{});assert.equal(run.status,200);
     assert.equal((await run.json()).project_acceptance_complete,true);
     const stored=db.prepare('SELECT value FROM automation_state WHERE key=?').get('epic_state').value;

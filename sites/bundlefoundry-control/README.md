@@ -37,8 +37,9 @@ Do not create duplicate schedules. Reuse this updater and this private Site.
 Gmail 连接和 Render 服务认证保持各自的职责。
 
 所有者在本站提交 Epic 官方一次性授权代码。凭据修改需要真实 Sites 所有者身份及同源请求；
-仅有平台服务认证的定时任务不能连接或断开账号。任务通过 `/api/epic/run` 运行，
+仅有平台服务认证的定时任务不能连接或断开账号。Epic 每周五台北时间 09:00 的独立任务通过 `/api/epic/run` 领取，
 通过 `/api/epic/status` 回读；没有授权时只查询公开促销，不尝试领取。
+资产包继续每日两次，其任务仅调用 `/api/epic/refresh` 维持 Epic 授权，不提交游戏订单。
 订单预览必须明确为免费且全部支付金额为零；入库以账号权益核实。
 测试及详细部署、凭据位置和验收限制见 [Epic 说明](docs/epic-automation.md)。
 
