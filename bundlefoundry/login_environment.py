@@ -43,17 +43,21 @@ async function status(){try{const r=await fetch('/api/status');if(!r.ok){locatio
 
 
 class Gateway:
-    def __init__(self, vault, access_file, expected_account, novnc, ttl=86400):
+    def __init__(self, vault, access_file, expected_account, novnc, ttl=86400, reuse_access=False):
         self.vault = vault
         self.expected_account = expected_account.lower()
         self.novnc = Path(novnc).resolve()
         self.access_file = Path(access_file)
         self.access_file.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-        # Every process start rotates access; the key never goes in source/logs.
-        self.token = secrets.token_urlsafe(32)
-        self.access_file.write_text(self.token)
-        self.access_file.chmod(0o600)
-        self.deadline = time.time() + ttl
+        # Explicitly resuming a private session keeps its original expiry.
+        if reuse_access and self.access_file.exists():
+            self.token = self.access_file.read_text().strip()
+            self.deadline = self.access_file.stat().st_mtime + ttl
+        else:
+            self.token = secrets.token_urlsafe(32)
+            self.access_file.write_text(self.token)
+            self.access_file.chmod(0o600)
+            self.deadline = time.time() + ttl
         self.browser = None
         self.saved = False
         self.profile_encrypted = False
@@ -133,12 +137,34 @@ class Gateway:
         if not await self.capture():
             return web.json_response({"error": "请先完成对应账号的 BundleFoundry 登录。"}, status=409)
         async with self.lock:
-            await self.browser.close()
+            await self.close_chrome()
             # Archive only this purpose-created profile, after Chrome flushes it.
             profile = self.vault.directory / "google-browser"
             await asyncio.to_thread(self.encrypt_profile, profile)
             self.profile_encrypted = True
         return web.json_response({"ok": True})
+
+    async def close_chrome(self):
+        # Closing a Playwright CDP connection only disconnects its client.
+        # Explicitly close the real Chrome process before archiving live SQLite.
+        cdp = await self.browser.new_browser_cdp_session()
+        processes = await cdp.send("SystemInfo.getProcessInfo")
+        pid = next(int(p["id"]) for p in processes["processInfo"] if p["type"] == "browser")
+        try:
+            await cdp.send("Browser.close")
+        except Exception:
+            if self.browser.is_connected():
+                raise
+        for _ in range(100):
+            stat = Path("/proc") / str(pid) / "stat"
+            try:
+                exited = stat.read_text().split(") ", 1)[1].split()[0] == "Z"
+            except FileNotFoundError:
+                exited = True
+            if exited:
+                return
+            await asyncio.sleep(.1)
+        raise RuntimeError("Chrome is still running; profile has not been removed")
 
     def encrypt_profile(self, profile):
         data = io.BytesIO()
@@ -209,7 +235,7 @@ class Gateway:
 
 async def serve(args):
     vault = Vault(args.state)
-    gate = Gateway(vault, args.access_file, args.account, args.novnc)
+    gate = Gateway(vault, args.access_file, args.account, args.novnc, reuse_access=args.reuse_access)
     async with async_playwright() as playwright:
         gate.browser = await playwright.chromium.connect_over_cdp("http://127.0.0.1:9225")
         runner = web.AppRunner(gate.app(), access_log=None)
@@ -231,6 +257,7 @@ def main():
     parser.add_argument("--account", required=True)
     parser.add_argument("--novnc", required=True)
     parser.add_argument("--port", type=int, default=18081)
+    parser.add_argument("--reuse-access", action="store_true", help="resume the current private link without extending its expiry")
     asyncio.run(serve(parser.parse_args()))
 
 

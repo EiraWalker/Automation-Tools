@@ -18,7 +18,8 @@ async def session(config):
     pump = None
     async with ClientSession(trust_env=True, timeout=ClientTimeout(total=40)) as public, ClientSession(timeout=ClientTimeout(total=25)) as local:
         async with public.ws_connect(config["origin"].replace("https://", "wss://") + "/internal/login-agent",
-                headers={"Authorization": "Bearer " + config["agent_token"]}, ssl=ssl_context, heartbeat=20, max_msg_size=4*1024*1024) as ws:
+                headers={"Authorization": "Bearer " + config["agent_token"]}, ssl=ssl_context,
+                proxy=os.environ.get("HTTPS_PROXY"), heartbeat=20, max_msg_size=4*1024*1024) as ws:
             async def http(command):
                 try:
                     async with local.request(command["method"], "http://127.0.0.1:18081" + command["path"],
