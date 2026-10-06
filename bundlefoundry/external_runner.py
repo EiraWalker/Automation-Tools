@@ -5,7 +5,8 @@ import re
 import tempfile
 import hashlib
 
-from bundlefoundry import BundleFoundry
+from bundlefoundry import BASE, BundleFoundry, NeedsLogin
+from session_recovery import RecoveringBundleFoundry
 from gmail import newsletter_links
 from vault import Vault
 from worker import Queue
@@ -25,6 +26,9 @@ def run_external(payload, bootstrap_vault):
     actual = payload.get("source_account", "")
     if not isinstance(actual, str) or not expected or actual.lower() != expected:
         raise ValueError("source account mismatch")
+    session_test = payload.get("session_recovery_test") is True
+    if session_test and os.getenv("SESSION_RECOVERY_TEST_ENABLED", "false").lower() != "true":
+        raise ValueError("session recovery test is disabled")
     for message in payload["messages"]:
         if not isinstance(message, dict) or not re.fullmatch(r"[a-f0-9]{1,64}", message.get("id", "")):
             raise ValueError("invalid message identity")
@@ -62,9 +66,39 @@ def run_external(payload, bootstrap_vault):
             for message in payload["messages"]:
                 newsletter_links(message)
                 queue.add(message, source="live_gmail")
-            site = BundleFoundry(vault)
-            site.page("https://bundlefoundry.com/my-bundles")
-            queue.process(site)
+            test_evidence = None
+            if session_test:
+                # Invalidate only this run's site session. Preserve Google and the original checkpoint.
+                invalidated = vault.load()
+                invalidated["bundle_cookies"] = []
+                invalidated.pop("session_recovery", None)
+                vault.save(invalidated)
+                try:
+                    BundleFoundry(vault).page(BASE + "/my-bundles")
+                except NeedsLogin:
+                    test_evidence = {"site_session_invalid_before_login": True}
+                else:
+                    raise ValueError("session invalidation could not be verified")
+            site = RecoveringBundleFoundry(vault)
+            automation_state = "running"
+            try:
+                site.page(BASE + "/my-bundles")
+                if session_test:
+                    if site.recovery.summary().get("status") != "relogged_in":
+                        raise ValueError("test did not perform automatic login")
+                    test_evidence.update(google_session_reused=True, account_verified=True,
+                                         site_session_valid_after_login=True, no_interactive_input=True,
+                                         browser_profile_reencrypted=True, verified_at=site.recovery.summary()["verified_at"])
+                else:
+                    queue.process(site)
+                    recovery_status = site.recovery.summary().get("status")
+                    if recovery_status in ("needs_authorization", "retrying"):
+                        automation_state = recovery_status
+            except NeedsLogin:
+                automation_state = "needs_authorization"
+                if session_test:
+                    # Never replace a working durable checkpoint with a failed test session.
+                    raise
             evidence = queue.acceptance()
             state = {"schema_version": 1, "bootstrap_sha256": bootstrap_digest, "credentials": vault.load(), "queue": {
                 table: queue.db.execute(f"SELECT {','.join(columns)} FROM {table}").fetchall()
@@ -75,6 +109,8 @@ def run_external(payload, bootstrap_vault):
                        for row in state["queue"]["results"]]
             return {"checkpoint_encrypted": vault.cipher.encrypt(json.dumps(state).encode()).decode(),
                     "project_acceptance_complete": bool(evidence), "acceptance": evidence,
-                    "pending_messages": pending, "results": results}
+                    "pending_messages": pending, "results": results,
+                    "automation_state": automation_state, "session_recovery": site.recovery.summary(),
+                    **({"session_recovery_test": test_evidence} if test_evidence else {})}
         finally:
             queue.db.close()

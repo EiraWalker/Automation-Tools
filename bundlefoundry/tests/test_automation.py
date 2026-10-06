@@ -211,7 +211,7 @@ class PersistenceTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as root:
             vault = Vault(root)
-            with patch("worker.Gmail") as gmail, patch("worker.BundleFoundry") as site, patch("worker.time.monotonic", side_effect=lambda: elapsed[0]), patch.dict("os.environ", {"POLL_SECONDS": "43200"}):
+            with patch("worker.Gmail") as gmail, patch("worker.RecoveringBundleFoundry") as site, patch("worker.time.monotonic", side_effect=lambda: elapsed[0]), patch.dict("os.environ", {"POLL_SECONDS": "43200"}):
                 gmail.return_value.messages.return_value = []
                 run(vault, ClockStop())
                 self.assertEqual(gmail.return_value.messages.call_count, 2)

@@ -11,7 +11,7 @@
 | Render `/internal/run` | 独立服务密钥认证；解析通知、领取免费档、核实归属 |
 | Sites D1 | 保存包含网站会话、去重队列和验收记录的加密 checkpoint |
 
-Gmail 密钥留在平台连接内，Google 浏览器 profile 留在原登录环境的加密归档内。Render 持有 Fernet 密钥和初始网站 vault；Site 只持有独立后端服务密钥及不含明文凭据的 checkpoint。Render 免费实例会休眠，由每次云任务的请求唤醒；不是依赖在休眠实例里运行定时器。
+Gmail 密钥留在平台连接内。Google 浏览器会话文件使用独立密钥加密，随 checkpoint 保存在 D1；Render 保管浏览器密钥和网站 vault 密钥，临时启动 Chromium 完成自动重登录。Site 只持有独立后端服务密钥及不含明文凭据的 checkpoint。详见 [自动 Google 重登录](automatic-google-relogin.md)。Render 免费实例会休眠，由每次云任务的请求唤醒；不是依赖在休眠实例里运行定时器。
 
 ## 配置
 

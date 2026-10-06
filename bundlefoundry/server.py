@@ -57,7 +57,9 @@ def application(status, vault=None):
                 except Exception as error:
                     logging.warning("cloud run issue=%s", type(error).__name__)
                     return web.json_response({"error": "run_failed_check_session"}, status=503)
-                status.report(automation_state="external_scheduler_ready", project_acceptance_complete=result["project_acceptance_complete"])
+                status.report(automation_state=result.get("automation_state", "external_scheduler_ready"),
+                              session_recovery=result.get("session_recovery", {}),
+                              project_acceptance_complete=result["project_acceptance_complete"])
                 return web.json_response(result, headers={"Cache-Control": "private, no-store"})
 
         app.router.add_post("/internal/run", cloud_run)
@@ -104,6 +106,16 @@ def main():
     queue.db.close()
     worker = threading.Thread(target=consume, args=(vault, stop, status), name="gmail-consumer", daemon=True)
     worker.start()
+    if os.getenv("AUTO_RELOGIN_ENABLED", "false").lower() == "true":
+        def prepare_browser():
+            try:
+                from session_recovery import prepare_browser_runtime
+                prepare_browser_runtime()
+                status.report(browser_runtime_ready=True)
+            except Exception as error:
+                logging.warning("browser provision issue=%s", type(error).__name__)
+                status.report(browser_runtime_ready=False)
+        threading.Thread(target=prepare_browser, name="browser-provision", daemon=True).start()
     logging.info("service listening; Google authorization is required before claims can run")
     try:
         web.run_app(application(status, vault), host="0.0.0.0", port=int(os.getenv("PORT", "8000")), access_log=None, print=None)

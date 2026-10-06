@@ -21,6 +21,10 @@ class NeedsLogin(Exception):
     pass
 
 
+class AccountMismatch(NeedsLogin):
+    pass
+
+
 class RetryLater(Exception):
     pass
 
@@ -158,7 +162,7 @@ class BundleFoundry:
             if not user:
                 raise NeedsLogin("BundleFoundry needs a Google sign-in")
             if not self.account or user.get("email", "").lower() != self.account.lower():
-                raise NeedsLogin("BundleFoundry account does not match configured Gmail")
+                raise AccountMismatch("BundleFoundry account does not match configured Gmail")
         return props
 
     def claim(self, url):

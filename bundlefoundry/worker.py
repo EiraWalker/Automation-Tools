@@ -12,6 +12,7 @@ import time
 from bundlefoundry import BASE, SLUG, BundleFoundry, NeedsLogin, RetryLater
 from gmail import Gmail, newsletter_links
 from vault import Vault
+from session_recovery import RecoveringBundleFoundry
 
 LOG = logging.getLogger("free-bundles")
 
@@ -83,7 +84,7 @@ def run(vault, stop, once=False, report=None):
     report = report or (lambda **_: None)
     queue = Queue(vault.directory)
     gmail = Gmail(vault)
-    site = BundleFoundry(vault)
+    site = RecoveringBundleFoundry(vault)
     queue.db.execute("UPDATE messages SET next_attempt=0 WHERE done=0")
     queue.db.commit()
     poll_interval = max(60, int(os.getenv("POLL_SECONDS", "43200")))

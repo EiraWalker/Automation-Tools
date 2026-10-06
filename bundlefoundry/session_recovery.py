@@ -1,0 +1,239 @@
+"""Bounded Google browser session reuse; no passwords or OAuth tokens are collected."""
+import io
+import json
+import os
+import re
+import subprocess
+import sys
+import tarfile
+import tempfile
+import threading
+import time
+from pathlib import Path
+from urllib.parse import urlsplit
+
+from cryptography.fernet import Fernet
+
+from bundlefoundry import BASE, AccountMismatch, BundleFoundry, NeedsLogin, RetryLater, site_cookie
+
+PROFILE_FILES = frozenset({
+    "Local State", "Default/Cookies", "Default/Cookies-journal",
+    "Default/Network/Cookies", "Default/Network/Cookies-journal",
+    "Default/Preferences", "Default/Secure Preferences",
+})
+MAX_PROFILE_TOKEN = 250_000
+_install_lock = threading.Lock()
+
+
+class InteractiveLoginRequired(NeedsLogin):
+    pass
+
+
+def pack_profile(profile):
+    """Archive only session files, after the Chromium process has exited."""
+    data = io.BytesIO()
+    with tarfile.open(fileobj=data, mode="w:gz") as archive:
+        for relative in sorted(PROFILE_FILES):
+            path = Path(profile) / relative
+            if path.is_file() and not path.is_symlink():
+                archive.add(path, arcname="google-browser/" + relative, recursive=False)
+    return data.getvalue()
+
+
+def unpack_profile(data, root):
+    """Reject unexpected files and oversized archives before extracting anything."""
+    with tarfile.open(fileobj=io.BytesIO(data), mode="r:gz") as archive:
+        members = archive.getmembers()
+        if len(members) > len(PROFILE_FILES) or sum(m.size for m in members) > 4_000_000:
+            raise ValueError("browser archive exceeds session limits")
+        names = set()
+        for member in members:
+            if (not member.isfile() or member.name not in {"google-browser/" + p for p in PROFILE_FILES}
+                    or member.name in names):
+                raise ValueError("browser archive contains an unexpected file")
+            names.add(member.name)
+        if "google-browser/Local State" not in names or not any(n.endswith("/Cookies") for n in names):
+            raise ValueError("browser session files missing")
+        archive.extractall(root, filter="data")
+    profile = Path(root) / "google-browser"
+    for directory in [profile, *[p for p in profile.rglob("*") if p.is_dir()]]:
+        directory.chmod(0o700)
+    for path in profile.rglob("*"):
+        if path.is_file():
+            path.chmod(0o600)
+    return profile
+
+
+def prepare_browser_runtime():
+    """Provision Chromium on hosts whose existing build command only installs pip deps."""
+    from playwright.sync_api import sync_playwright
+    explicit = os.getenv("GOOGLE_BROWSER_EXECUTABLE")
+    if explicit:
+        if not Path(explicit).is_file():
+            raise RetryLater("configured browser unavailable")
+        return explicit
+    with _install_lock:
+        with sync_playwright() as playwright:
+            executable = playwright.chromium.executable_path
+        if not Path(executable).is_file():
+            try:
+                subprocess.run([sys.executable, "-m", "playwright", "install", "chromium"],
+                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                               check=True, timeout=120)
+            except (OSError, subprocess.SubprocessError):
+                raise RetryLater("browser runtime unavailable") from None
+        return executable
+
+
+def browser_login(account, archive, cipher, *, timeout=65, context_options=None):
+    """Return new site cookies and refreshed, independently encrypted Google profile."""
+    from playwright.sync_api import sync_playwright
+    if not isinstance(archive, str) or len(archive) > MAX_PROFILE_TOKEN:
+        raise ValueError("invalid browser profile")
+    executable = prepare_browser_runtime()
+    with tempfile.TemporaryDirectory(prefix="google-relogin-") as root:
+        profile = unpack_profile(cipher.decrypt(archive.encode()), root)
+        cookies = None
+        with sync_playwright() as playwright:
+            context = playwright.chromium.launch_persistent_context(
+                str(profile), executable_path=executable, headless=True,
+                args=["--no-sandbox", "--disable-dev-shm-usage", "--password-store=basic"],
+                **(context_options or {}))
+            try:
+                # A site session in an old profile must never mask a failed Google login.
+                context.clear_cookies(domain=re.compile(r"(^|\.)bundlefoundry\.com$"))
+                page = context.new_page()
+                page.goto(BASE + "/auth/google/redirect", wait_until="domcontentloaded", timeout=30000)
+                deadline = time.monotonic() + timeout
+                chosen = False
+                while time.monotonic() < deadline:
+                    host = urlsplit(page.url).hostname
+                    if host == "bundlefoundry.com":
+                        node = page.locator("[data-page]").first
+                        if node.count():
+                            props = json.loads(node.get_attribute("data-page") or "{}").get("props", {})
+                            user = (props.get("auth") or {}).get("user") or {}
+                            if user.get("email"):
+                                if user["email"].lower() != account.lower():
+                                    raise AccountMismatch("browser account differs from configured account")
+                                cookies = [dict(c, secure=True) for c in context.cookies([BASE]) if site_cookie(c)]
+                                if not cookies:
+                                    raise InteractiveLoginRequired("site did not issue a session")
+                                break
+                    elif host == "accounts.google.com":
+                        # Only select the already signed-in, expected account. Never enter credentials.
+                        if not chosen:
+                            target = page.locator("[data-identifier]")
+                            for index in range(target.count()):
+                                entry = target.nth(index)
+                                if (entry.get_attribute("data-identifier") or "").lower() == account.lower():
+                                    entry.click(timeout=5000)
+                                    chosen = True
+                                    break
+                        if page.locator("input[type=password],input[name=Passwd],input[name=totpPin],input[name=idvPin]").count():
+                            raise InteractiveLoginRequired("Google requires owner verification")
+                    else:
+                        raise InteractiveLoginRequired("login reached an unexpected destination")
+                    page.wait_for_timeout(1000)
+                if cookies is None:
+                    raise InteractiveLoginRequired("Google login needs owner interaction")
+            finally:
+                context.clear_cookies(domain=re.compile(r"(^|\.)bundlefoundry\.com$"))
+                # Persistent context.close waits for the launched Chromium process to exit.
+                context.close()
+        updated = cipher.encrypt(pack_profile(profile)).decode()
+        if len(updated) > MAX_PROFILE_TOKEN:
+            raise ValueError("updated browser profile exceeds limits")
+        unpack_profile(cipher.decrypt(updated.encode()), Path(root) / "archive-check")
+        return cookies, updated
+
+
+class SessionRecovery:
+    def __init__(self, vault, login=None):
+        self.vault = vault
+        self.login = login or browser_login
+        self.attempted = False
+
+    def summary(self):
+        state = self.vault.load().get("session_recovery", {})
+        return {k: state[k] for k in ("status", "attempted_at", "verified_at", "next_attempt_at", "attempts", "error_code") if k in state}
+
+    def recover(self):
+        saved = self.vault.load()
+        state = dict(saved.get("session_recovery", {}))
+        now = time.time()
+        if self.attempted or now < state.get("next_attempt_at", 0):
+            raise NeedsLogin("automatic login is cooling down; owner verification may be needed")
+        if os.getenv("AUTO_RELOGIN_ENABLED", "false").lower() != "true":
+            raise NeedsLogin("automatic Google login is not configured")
+        archive = saved.get("google_browser_profile_encrypted") or os.getenv("GOOGLE_BROWSER_PROFILE_ENCRYPTED")
+        key = os.getenv("GOOGLE_BROWSER_KEY")
+        if not archive or not key:
+            raise NeedsLogin("Google browser session is not configured")
+        self.attempted = True
+        state.update(status="relogging_in", attempted_at=now, attempts=state.get("attempts", 0) + 1,
+                     next_attempt_at=now + 900)
+        saved["session_recovery"] = state
+        self.vault.save(saved)
+        try:
+            cookies, profile = self.login(saved["account"], archive, Fernet(key.encode()))
+            # Verify via the same HTTP client used for claims before replacing durable credentials.
+            original = self.vault.load()
+            candidate = {**original, "bundle_cookies": cookies}
+            self.vault.save(candidate)
+            try:
+                BundleFoundry(self.vault).page(BASE + "/my-bundles")
+            except Exception:
+                self.vault.save(original)
+                raise
+            current = self.vault.load()
+            current["google_browser_profile_encrypted"] = profile
+            state.update(status="relogged_in", verified_at=time.time(), next_attempt_at=0)
+            state.pop("error_code", None)
+            current["session_recovery"] = state
+            self.vault.save(current)
+        except Exception as error:
+            current = self.vault.load()
+            code = "account_mismatch" if isinstance(error, AccountMismatch) else (
+                "owner_verification_required" if isinstance(error, InteractiveLoginRequired) else "browser_login_unavailable")
+            state.update(status="needs_authorization" if code != "browser_login_unavailable" else "retrying",
+                         error_code=code, next_attempt_at=time.time() + (43200 if code != "browser_login_unavailable" else 900))
+            current["session_recovery"] = state
+            self.vault.save(current)
+            if isinstance(error, AccountMismatch):
+                raise AccountMismatch("Google browser account mismatch; owner verification required") from None
+            raise NeedsLogin("automatic login incomplete; check private task status") from None
+
+
+class RecoveringBundleFoundry(BundleFoundry):
+    def __init__(self, vault, recovery=None):
+        super().__init__(vault)
+        self.recovery = recovery or SessionRecovery(vault)
+
+    def reload_session(self):
+        replacement = BundleFoundry(self.vault)
+        self.jar, self.opener, self.account = replacement.jar, replacement.opener, replacement.account
+
+    def page(self, url, authenticated=True):
+        try:
+            return super().page(url, authenticated)
+        except AccountMismatch:
+            raise
+        except NeedsLogin:
+            if not authenticated:
+                raise
+            self.recovery.recover()
+            self.reload_session()
+            return super().page(url, authenticated)
+
+    def claim(self, url):
+        try:
+            return super().claim(url)
+        except AccountMismatch:
+            raise
+        except NeedsLogin:
+            self.recovery.recover()
+            self.reload_session()
+            # claim starts by inspecting ownership/pending receipts, so an ambiguous
+            # previous checkout is reconciled before any second free POST.
+            return super().claim(url)

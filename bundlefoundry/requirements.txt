@@ -1,2 +1,3 @@
 cryptography>=44,<47
 aiohttp>=3.12,<4
+playwright>=1.55,<2
