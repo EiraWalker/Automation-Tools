@@ -8,7 +8,7 @@ as an alternative. Preserve private audience when updating a Site.
 Use the configuration pattern in
 [Codebase Graph MCP on Render](https://github.com/EiraWalker/Code-Tools/tree/main/Plugins/codebase-graph-mcp-render),
 especially `docs/plugin.md` and `SECURITY.md`. The repository-specific requirements
-are in [docs/private-verification.md](docs/private-verification.md).
+are in [sites/bundlefoundry-control/docs/private-verification.md](sites/bundlefoundry-control/docs/private-verification.md).
 
 Render exposes public health/status and a separately authenticated machine API.
 Never expose an interactive verification page there. Do not mount the legacy `LoginRelay`,

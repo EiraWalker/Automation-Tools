@@ -1,6 +1,6 @@
 # Sites 定时任务与 Render 领取后端
 
-当前方案复用用户已经连接的 Gmail，避免要求另建 Google OAuth 客户端或导出连接凭据。私有控制入口遵循 [Sites OAuth 要求](private-verification.md)。完整 Site 源码模板在 [sites/bundlefoundry-control](../sites/bundlefoundry-control)。
+当前方案复用用户已经连接的 Gmail，避免要求另建 Google OAuth 客户端或导出连接凭据。私有控制入口遵循 [Sites OAuth 要求](private-verification.md)。完整 Site 源码模板在 [sites/bundlefoundry-control](../)。
 
 ## 部署组成
 

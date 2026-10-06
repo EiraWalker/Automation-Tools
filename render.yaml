@@ -2,7 +2,7 @@ services:
 - type: web
   name: automation-tools-bundlefoundry
   runtime: python
-  rootDir: bundlefoundry
+  rootDir: sites/bundlefoundry-control/bundlefoundry
   plan: starter
   region: singapore
   buildCommand: pip install -r requirements.txt

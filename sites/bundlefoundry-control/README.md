@@ -29,6 +29,21 @@ The encrypted Google profile remains separate in the authorized login environmen
 Timing is configured on the linked Sites automation, Asia/Taipei, twice daily.
 Do not create duplicate schedules. Reuse this updater and this private Site.
 
+## 目录与运行
+
+本站沿用 `sites/bundlefoundry-control/`，Sites Worker、Python 后端和本站文档统一保存在这里。
+
+| 目录／文件 | 用途 |
+| --- | --- |
+| [`bundlefoundry/`](bundlefoundry/README.md) | Render Python 领取后端、授权工具及测试 |
+| [`docs/`](docs/cloud-scheduler.md) | 云端调度、私有验证及自动重登录说明 |
+| `worker.js`、`scripts/` | Sites 控制页、API 和构建脚本 |
+| `db/`、`drizzle/` | D1 schema 与迁移 |
+
+在本站目录执行 `npm test`；在 `bundlefoundry/` 中执行 `python -m unittest discover -s tests -v`。
+Render Root Directory 为 `sites/bundlefoundry-control/bundlefoundry`，部署配置见仓库根目录的 [`render.yaml`](../../render.yaml)。
+既有手动创建的 Render 服务在下一次部署前，也需把 Dashboard 中的 Root Directory 更新为这个路径。
+
 ## 服务主体与技术架构
 
 每个大框标明负责的公司或平台，框内标明它保存什么、执行什么。
