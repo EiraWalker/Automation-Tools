@@ -2,7 +2,7 @@
 
 云端自动化工具集合。第一个工具是 [BundleFoundry 免费档自动领取](sites/bundlefoundry-control/bundlefoundry/README.md)。
 
-同一私有控制站点新增 [Epic 每周免费游戏](sites/bundlefoundry-control/docs/epic-automation.md)：独立加密 OAuth 令牌、免费订单检查、账号权益核验和断线恢复。Epic 直接由 Sites Worker 执行，Render 继续处理 BundleFoundry；真实新领取验收需先在私有页面完成 Epic 官方授权。
+同一私有控制站点包含 [Epic 每周免费游戏链接](sites/bundlefoundry-control/docs/epic-automation.md)：每周五台北时间 09:00 更新官方游戏页面链接和截止时间，由用户在本地浏览器手动领取。Epic 仅查询公开目录，无需登录凭据；Render 继续处理 BundleFoundry。
 
 今后的交互验证入口使用 **owner-private ChatGPT Sites OAuth**。Render 仅提供无私人资料的健康状态，不提供浏览器登录网页。配置边界与参考项目见 [私有验证入口](sites/bundlefoundry-control/docs/private-verification.md)。
 

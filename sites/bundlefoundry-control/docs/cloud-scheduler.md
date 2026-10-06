@@ -2,9 +2,9 @@
 
 当前方案复用用户已经连接的 Gmail，避免要求另建 Google OAuth 客户端或导出连接凭据。私有控制入口遵循 [Sites OAuth 要求](private-verification.md)。完整 Site 源码模板在 [sites/bundlefoundry-control](../)。
 
-Epic 使用每周五台北时间 09:00 的独立关联任务：POST `/api/epic/run`，GET `/api/epic/status` 回读。
-原有每日两次的资产包任务只为 Epic POST `/api/epic/refresh` 续期凭据，不领取游戏。
-Epic 由 Sites Worker 直接执行，不经 Render，不使用 Gmail 凭据；其加密令牌、恢复日志及权限边界见 [Epic 架构](epic-automation.md)。
+Epic 使用每周五台北时间 09:00 的独立关联任务：POST `/api/epic/update` 更新公开游戏链接，GET `/api/epic/status` 回读。
+用户在本地浏览器手动领取；Epic 更新无需凭据，也不经过 Render。每日资产包任务不再执行 Epic 续期。
+新的架构与验收条件见 [Epic 链接服务](epic-automation.md)。
 
 ## 部署组成
 

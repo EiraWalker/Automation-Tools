@@ -31,19 +31,12 @@ Do not create duplicate schedules. Reuse this updater and this private Site.
 
 ## Epic 服务
 
-此模板同时包含 Epic 服务与私有授权页面。Epic 请求直接由本站 Worker 发往官方服务，
-不经过 Render。Epic OAuth 令牌使用独立 AES-GCM 密钥加密保存于 D1；秘密配置为
-`EPIC_CREDENTIAL_KEY` 与 `EPIC_CLIENT_SECRET`。既有 BundleFoundry Fernet checkpoint、
-Gmail 连接和 Render 服务认证保持各自的职责。
+Epic 每周五台北时间 09:00 更新公开限免游戏的官方页面链接及截止时间，由用户在本地浏览器手动领取。私有页面提供独立游戏链接与“更新游戏链接”按钮。
 
-所有者在本站提交 Epic 官方一次性授权代码。凭据修改需要真实 Sites 所有者身份及同源请求；
-仅有平台服务认证的定时任务不能连接或断开账号。Epic 每周五台北时间 09:00 的独立任务通过 `/api/epic/run` 领取，
-通过 `/api/epic/status` 回读；没有授权时只查询公开促销，不尝试领取。
-资产包继续每日两次，其任务仅调用 `/api/epic/refresh` 维持 Epic 授权，不提交游戏订单。
-订单预览必须明确为免费且全部支付金额为零；入库以账号权益核实。
-测试及详细部署、凭据位置和验收限制见 [Epic 说明](docs/epic-automation.md)。
+更新入口为 `POST /api/epic/update`，回读入口为 `GET /api/epic/status`。不需要 Epic 登录或凭据，不经过 Render；旧授权、Cookie 导入、续期与自动领取流程已停用。历史加密状态保留但不再使用。原有资产包任务保持每天 09:00、21:00 自动领取，并已移除 Epic 凭据维护。
 
-下面的原图描述 BundleFoundry 部分；Epic 的新增架构图在上述说明中。
+详细架构、缓存和新的验收条件见 [Epic 说明](docs/epic-automation.md)。下方原图描述 BundleFoundry 部分。
+
 ## 目录与运行
 
 本站沿用 `sites/bundlefoundry-control/`，Sites Worker、Python 后端和本站文档统一保存在这里。

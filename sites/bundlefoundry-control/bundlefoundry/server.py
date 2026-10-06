@@ -102,29 +102,6 @@ def application(status, vault=None):
 
         app.router.add_route('*','/internal/google-browser/{action}',google_browser)
 
-        async def epic_web_session(request):
-            secret = os.getenv("AUTOMATION_SERVICE_TOKEN", "")
-            if len(secret) < 32 or not hmac.compare_digest(request.headers.get("Authorization", ""), "Bearer " + secret):
-                return web.json_response({"error": "unauthorized"}, status=401)
-            if request.content_length and request.content_length > 128000:
-                return web.json_response({"error": "invalid_sso_input"}, status=400)
-            if lock.locked():
-                return web.json_response({"error": "run_in_progress"}, status=409)
-            async with lock:
-                try:
-                    from epic_session import website_session, EpicSessionError
-                    result = await asyncio.to_thread(website_session, await request.json())
-                    return web.json_response(result, headers={"Cache-Control": "private, no-store"})
-                except ValueError:
-                    return web.json_response({"error": "invalid_sso_input"}, status=400)
-                except EpicSessionError as error:
-                    return web.json_response({"error": error.code}, status=403)
-                except Exception as error:
-                    # Playwright error text may contain the SSO URL: never log it.
-                    logging.warning("epic browser issue=%s", type(error).__name__)
-                    return web.json_response({"error": "checkout_action_required"}, status=503)
-
-        app.router.add_post("/internal/epic/web-session", epic_web_session)
     return app
 
 
