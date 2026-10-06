@@ -6,7 +6,7 @@ import tempfile
 import hashlib
 
 from bundlefoundry import BASE, BundleFoundry, NeedsLogin
-from session_recovery import RecoveringBundleFoundry
+from session_recovery import RecoveringBundleFoundry, import_browser_session
 from gmail import newsletter_links
 from vault import Vault
 from worker import Queue
@@ -27,6 +27,9 @@ def run_external(payload, bootstrap_vault):
     if not isinstance(actual, str) or not expected or actual.lower() != expected:
         raise ValueError("source account mismatch")
     session_test = payload.get("session_recovery_test") is True
+    session_import = payload.get("google_session_import")
+    if session_import is not None and (session_test or payload["messages"]):
+        raise ValueError("session imports cannot process claims or invalidation tests")
     if session_test and os.getenv("SESSION_RECOVERY_TEST_ENABLED", "false").lower() != "true":
         raise ValueError("session recovery test is disabled")
     for message in payload["messages"]:
@@ -62,6 +65,8 @@ def run_external(payload, bootstrap_vault):
                     rows = restored.get("queue", {}).get(table, [])
                     queue.db.executemany(f"INSERT INTO {table} ({','.join(columns)}) VALUES ({','.join('?' for _ in columns)})", rows)
                 queue.db.commit()
+            if session_import is not None:
+                import_browser_session(vault, session_import)
             # Connector returns live Gmail API MIME trees; revalidate every body.
             for message in payload["messages"]:
                 newsletter_links(message)
@@ -90,7 +95,8 @@ def run_external(payload, bootstrap_vault):
                                          site_session_valid_after_login=True, no_interactive_input=True,
                                          browser_profile_reencrypted=True, verified_at=site.recovery.summary()["verified_at"])
                 else:
-                    queue.process(site)
+                    if session_import is None:
+                        queue.process(site)
                     recovery_status = site.recovery.summary().get("status")
                     if recovery_status in ("needs_authorization", "retrying"):
                         automation_state = recovery_status
@@ -111,6 +117,7 @@ def run_external(payload, bootstrap_vault):
                     "project_acceptance_complete": bool(evidence), "acceptance": evidence,
                     "pending_messages": pending, "results": results,
                     "automation_state": automation_state, "session_recovery": site.recovery.summary(),
+                    **({"google_session_imported": True} if session_import is not None else {}),
                     **({"session_recovery_test": test_evidence} if test_evidence else {})}
         finally:
             queue.db.close()

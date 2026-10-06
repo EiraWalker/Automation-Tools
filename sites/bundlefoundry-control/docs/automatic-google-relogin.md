@@ -38,8 +38,31 @@ Site 不持有两把解密密钥。生产平台秘密变量及其调用参数不
 每个任务最多尝试一次自动登录。Google 要求人工验证或账号不一致时，
 保存 `needs_authorization`，冷却 12 小时；浏览器或网络不可用时冷却 15 分钟。
 状态及冷却时间进入 checkpoint，实例重启不会取消冷却。
+账号选择兼容 `data-identifier` 和 `data-email` 两种标记，只点击预期账号。
+Google 的拒绝登录页立即记录 `google_session_rejected`，密码验证页记录
+`google_password_required`，不把它们作为普通网络错误反复重试。
+Google Cookie 文件能够恢复、Cookie 数量大于零，都不能证明 Google 接受会话；
+只有网站回调后的账号核对和 My Bundles 验证通过，才记录自动重登录成功。
 人工验证继续遵循 [私有 Sites OAuth 要求](private-verification.md)；
 Render 不提供登录、桌面或 WebSocket 浏览器入口。
+
+## Google 要求重新验证时
+
+所有者打开私有 Site 的 `/google-authorization`，下载本地授权脚本。
+在自己的电脑安装 Python 3 和 Chrome，执行 `python -m pip install playwright`，
+再运行下载的 `google-local-auth.py`。输入预期邮箱，在专用 Chrome 窗口的
+Google 官方页面完成登录；脚本核对 BundleFoundry 邮箱，导出 Google 与网站会话。
+脚本不读取密码或验证码，Chrome 退出后才归档精简 profile，最后删除临时浏览器目录。
+
+生成的 `google-session-import.json` 是敏感的临时明文文件（在支持 POSIX 权限的系统上为 `600`）。
+只在私有 Site 上传，导入后删除；不要提交仓库、转发或粘贴到聊天。
+上传接口 `/api/google/import` 要求 Sites 所有者身份、同源 Origin 和 JSON，
+仅有平台服务凭据的定时任务不能更换会话。
+Sites 通过 HTTPS 和独立后端服务认证转发资料，不将明文写入 D1。
+Render 限制导入域名、归档内容和大小，通过 My Bundles 核对账号后，
+才用既有独立浏览器密钥加密资料并返回检查点。失败不覆盖原检查点。
+导入保留原领取队列与验收记录，不执行购买；新授权清除旧冷却状态。
+页面在导入成功后立即发起云端失效测试；导入成功本身不表示自动重登录通过。
 
 ## 配置与初始迁移
 

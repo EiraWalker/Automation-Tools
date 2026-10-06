@@ -1,5 +1,6 @@
 import {EpicAPI,EpicService,EpicError,summary,configuredTargets} from './epic.js';
 import {page,clientScript} from './ui.js';
+import {googleAuthorizationPage,googleAuthorizationScript,localExporter} from './google-authorization.js';
 const headers = {'Cache-Control':'private, no-store','X-Content-Type-Options':'nosniff','Referrer-Policy':'no-referrer'};
 const json = (value, status=200) => Response.json(value,{status,headers});
 
@@ -74,8 +75,11 @@ async function epicRoute(request,env,path) {
   }
 }
 
-async function update(request, env, sessionTest=false) {
+async function update(request, env, sessionTest=false, sessionImport=false) {
   const origin=request.headers.get('Origin');
+  if(sessionImport && (!isOwner(request,env) || origin!==new URL(request.url).origin)) return json({error:'forbidden'},403);
+  if(sessionImport && request.headers.get('Content-Type')?.split(';')[0].toLowerCase()!=='application/json') return json({error:'invalid_content_type'},415);
+  if(sessionImport && Number(request.headers.get('Content-Length')||0)>250000) return json({error:'batch_too_large'},413);
   if (origin && origin !== new URL(request.url).origin) return json({error:'origin_rejected'},403);
   if(sessionTest && env.SESSION_RECOVERY_TEST_ENABLED!=='true') return json({error:'session_test_disabled'},403);
   if (Number(request.headers.get('Content-Length') || 0)>3500000) return json({error:'batch_too_large'},413);
@@ -84,6 +88,7 @@ async function update(request, env, sessionTest=false) {
   let body;
   try { body=JSON.parse(text); } catch { return json({error:'invalid_json'},400); }
   if (!Array.isArray(body.messages) || body.messages.length>25 || typeof body.source_account!=='string' || body.source_account.toLowerCase()!==env.OWNER_EMAIL.toLowerCase()) return json({error:'invalid_batch'},400);
+  if(sessionImport && (text.length>250000 || body.messages.length || body.google_session_import?.version!==1 || body.google_session_import?.account?.toLowerCase()!==env.OWNER_EMAIL.toLowerCase())) return json({error:'invalid_batch'},400);
   const now=Date.now();
   const lease=crypto.randomUUID();
   const acquired=await env.DB.prepare('INSERT INTO automation_state (key,value,updated_at) VALUES (?,?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at WHERE automation_state.updated_at<?').bind('lease',JSON.stringify(lease),now,now-10*60*1000).run();
@@ -92,11 +97,12 @@ async function update(request, env, sessionTest=false) {
     const checkpoint=await read(env,'checkpoint');
     const origin=new URL(env.RENDER_ORIGIN);
     if(origin.protocol!=='https:' || origin.username || origin.password || origin.pathname!=='/') throw Error('invalid backend origin');
-    const upstream=await fetch(new URL('/internal/run',origin),{method:'POST',redirect:'manual',headers:{'Authorization':'Bearer '+env.AUTOMATION_SERVICE_TOKEN,'Content-Type':'application/json'},body:JSON.stringify({source_account:body.source_account,messages:sessionTest?[]:body.messages,checkpoint_encrypted:checkpoint,...(sessionTest?{session_recovery_test:true}:{})}),signal:AbortSignal.timeout(180000)});
+    const upstream=await fetch(new URL('/internal/run',origin),{method:'POST',redirect:'manual',headers:{'Authorization':'Bearer '+env.AUTOMATION_SERVICE_TOKEN,'Content-Type':'application/json'},body:JSON.stringify({source_account:body.source_account,messages:sessionTest?[]:body.messages,checkpoint_encrypted:checkpoint,...(sessionTest?{session_recovery_test:true}:{}),...(sessionImport?{google_session_import:body.google_session_import}:{})}),signal:AbortSignal.timeout(180000)});
     if(!upstream.ok) throw Error('backend unavailable');
     const result=await upstream.json();
     if(typeof result.checkpoint_encrypted!=='string' || !Array.isArray(result.results) || typeof result.project_acceptance_complete!=='boolean') throw Error('invalid result');
     if(sessionTest && result.session_recovery_test?.site_session_valid_after_login!==true) throw Error('session test incomplete');
+    if(sessionImport && result.google_session_imported!==true) throw Error('session import incomplete');
     const previous=await read(env,'snapshot');
     const snapshot={...previous,last_success_at:result.automation_state==='needs_authorization'?previous?.last_success_at:new Date().toISOString(),automation_state:result.automation_state||'running',session_recovery:result.session_recovery||{},pending_messages:result.pending_messages,project_acceptance_complete:result.project_acceptance_complete,acceptance:result.acceptance,results:result.results,...(sessionTest?{session_recovery_test:result.session_recovery_test}:{})};
     await env.DB.batch([
@@ -118,6 +124,10 @@ export default {
     const path=new URL(request.url).pathname;
     try {
       if(path.startsWith('/api/epic/')) return await epicRoute(request,env,path);
+      if(path==='/google-authorization' && request.method==='GET') return new Response(googleAuthorizationPage(),{headers:{...headers,'Content-Type':'text/html; charset=utf-8','Content-Security-Policy':"default-src 'none'; script-src 'self'; connect-src 'self'; form-action 'self'; base-uri 'none'; style-src 'unsafe-inline'; frame-ancestors 'self' https://chatgpt.com"}});
+      if(path==='/google-authorization/client.js' && request.method==='GET') return new Response(googleAuthorizationScript,{headers:{...headers,'Content-Type':'text/javascript; charset=utf-8'}});
+      if(path==='/google-authorization/export.py' && request.method==='GET') return new Response(localExporter,{headers:{...headers,'Content-Type':'text/x-python; charset=utf-8','Content-Disposition':'attachment; filename="google-local-auth.py"'}});
+      if(path==='/api/google/import' && request.method==='POST') return await update(request,env,false,true);
       if(path==='/client.js' && request.method==='GET') return new Response(clientScript,{headers:{...headers,'Content-Type':'text/javascript; charset=utf-8'}});
       if(path==='/api/update' && request.method==='POST') return await update(request,env);
       if(path==='/api/session-recovery/test' && request.method==='POST') return await update(request,env,true);

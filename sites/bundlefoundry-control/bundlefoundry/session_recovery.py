@@ -56,6 +56,36 @@ def google_cookie(cookie):
     return domain == "google.com" or domain.endswith(".google.com")
 
 
+def google_interaction_error(path, page):
+    """Classify authentication barriers without reading or logging page content."""
+    if path.endswith("/rejected"):
+        return "google_session_rejected"
+    if "/challenge/pwd" in path:
+        return "google_password_required"
+    if "/challenge/" in path or path.endswith("/challenge"):
+        return "owner_verification_required"
+    fields = page.locator("input[type=password],input[name=Passwd],input[name=totpPin],input[name=idvPin]")
+    if any(fields.nth(index).is_visible() for index in range(fields.count())):
+        return "owner_verification_required"
+    fields = page.locator("input[type=email]")
+    if any(fields.nth(index).is_visible() for index in range(fields.count())):
+        return "google_session_not_accepted"
+    return None
+
+
+def select_google_account(page, account):
+    """Support Google's account chooser variants, selecting only the expected account."""
+    entries = page.locator("[data-identifier],[data-email]")
+    for index in range(entries.count()):
+        entry = entries.nth(index)
+        identifier = entry.get_attribute("data-identifier") or entry.get_attribute("data-email") or ""
+        if identifier.lower() == account.lower() and entry.is_visible():
+            LOG.info("automatic relogin phase=selecting_expected_account")
+            entry.click(timeout=5000)
+            return True
+    return False
+
+
 def encrypt_browser_session(profile_bytes, cookies, cipher):
     """Portable cookie import supplements Chrome's host-specific cookie database encryption."""
     payload = {"schema_version": 2, "profile": base64.b64encode(profile_bytes).decode(),
@@ -64,6 +94,48 @@ def encrypt_browser_session(profile_bytes, cookies, cipher):
     if len(encrypted) > MAX_PROFILE_TOKEN:
         raise ValueError("browser session exceeds limits")
     return encrypted
+
+
+def import_browser_session(vault, data):
+    """Owner-private upload: verify before replacing any durable login material."""
+    saved = vault.load()
+    if (not isinstance(data, dict) or data.get("version") != 1
+            or not isinstance(data.get("account"), str)
+            or data["account"].lower() != saved["account"].lower()
+            or not isinstance(data.get("profile"), str) or len(data["profile"]) > MAX_PROFILE_TOKEN):
+        raise ValueError("invalid Google session import")
+    google = data.get("google_cookies")
+    bundle = data.get("bundle_cookies")
+    for cookies, scope in ((google, google_cookie), (bundle, site_cookie)):
+        if not isinstance(cookies, list) or not 1 <= len(cookies) <= 100:
+            raise ValueError("invalid imported cookies")
+        for cookie in cookies:
+            if (not isinstance(cookie, dict) or not isinstance(cookie.get("domain"), str) or not scope(cookie)
+                    or not isinstance(cookie.get("name"), str) or not cookie["name"]
+                    or not isinstance(cookie.get("value"), str) or not cookie["value"]
+                    or len(cookie["value"]) > 16384):
+                raise ValueError("invalid imported cookie scope")
+    try:
+        packed = base64.b64decode(data["profile"], validate=True)
+        cipher = Fernet(os.environ["GOOGLE_BROWSER_KEY"].encode())
+    except Exception:
+        raise ValueError("invalid browser session configuration") from None
+    with tempfile.TemporaryDirectory(prefix="google-import-check-") as root:
+        unpack_profile(packed, root)
+    encrypted = encrypt_browser_session(packed, google, cipher)
+    candidate = {**saved, "bundle_cookies": [dict(c, secure=True) for c in bundle]}
+    vault.save(candidate)
+    try:
+        # Use the normal HTTP client, with its existing account-match guard.
+        BundleFoundry(vault).page(BASE + "/my-bundles")
+    except Exception:
+        vault.save(saved)
+        raise
+    current = vault.load()
+    current["google_browser_profile_encrypted"] = encrypted
+    current["session_recovery"] = {"status": "authorized", "verified_at": time.time(),
+                                   "next_attempt_at": 0, "attempts": 0}
+    vault.save(current)
 
 
 def unpack_profile(data, root):
@@ -188,19 +260,12 @@ def browser_login(account, archive, cipher, *, timeout=65, context_options=None)
                                 google_cookies = [c for c in context.cookies() if google_cookie(c)]
                                 break
                     elif host == "accounts.google.com":
+                        code = google_interaction_error(path, page)
+                        if code:
+                            raise InteractiveLoginRequired("Google requires owner verification", code)
                         # Only select the already signed-in, expected account. Never enter credentials.
                         if not chosen:
-                            target = page.locator("[data-identifier]")
-                            for index in range(target.count()):
-                                entry = target.nth(index)
-                                if (entry.get_attribute("data-identifier") or "").lower() == account.lower():
-                                    entry.click(timeout=5000)
-                                    chosen = True
-                                    break
-                        if "challenge" in path or page.locator("input[type=password],input[name=Passwd],input[name=totpPin],input[name=idvPin]").count():
-                            raise InteractiveLoginRequired("Google requires owner verification")
-                        if page.locator("input[type=email]").count():
-                            raise InteractiveLoginRequired("Google session was not accepted", "google_session_not_accepted")
+                            chosen = select_google_account(page, account)
                     else:
                         raise InteractiveLoginRequired("login reached an unexpected destination")
                     page.wait_for_timeout(1000)
