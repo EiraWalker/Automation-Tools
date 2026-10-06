@@ -54,9 +54,10 @@ async function epicRoute(request,env,path) {
       env.DB.prepare('DELETE FROM automation_state WHERE key=?').bind('epic_links_error')
     ]);
     return json(linksStatus(snapshot));
-  } catch {
+  } catch(error) {
+    const reason=/^(network_error|upstream_http_[0-9]{3}|response_too_large|response_read_failed|invalid_json|invalid_catalogue)$/.test(error.code || '')?error.code:'storage_error';
     await write(env,'epic_links_error',{at:new Date().toISOString()});
-    return json({error:'catalogue_update_failed',mode:'manual'},503);
+    return json({error:'catalogue_update_failed',mode:'manual',reason},503);
   } finally {
     await env.DB.prepare('DELETE FROM automation_state WHERE key=? AND value=?').bind('epic_links_lease',JSON.stringify(lease)).run();
   }

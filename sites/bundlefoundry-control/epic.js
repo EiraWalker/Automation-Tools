@@ -35,15 +35,34 @@ export function freeGames(data, now=Date.now()) {
   return [...games.values()].sort((a,b)=>a.title.localeCompare(b.title));
 }
 
+function catalogueError(code) { const error=new Error(code);error.code=code;return error; }
 export async function fetchCatalogue(fetcher=fetch) {
-  const response=await fetcher.call(globalThis,catalogueUrl,{
-    method:'GET',redirect:'error',headers:{Accept:'application/json'},signal:AbortSignal.timeout(20000)
-  });
-  if(!response.ok || Number(response.headers.get('Content-Length') || 0)>3000000) throw Error('catalogue_unavailable');
-  const text=await response.text();
-  if(text.length>3000000) throw Error('catalogue_too_large');
-  const now=Date.now();
-  return {mode:'manual',country:'TW',updated_at:new Date(now).toISOString(),games:freeGames(JSON.parse(text),now)};
+  let response;
+  try {
+    // Workers supports manual redirect handling; reject redirects explicitly.
+    response=await fetcher.call(globalThis,catalogueUrl,{
+      method:'GET',redirect:'manual',headers:{Accept:'application/json'},signal:AbortSignal.timeout(20000)
+    });
+  } catch {throw catalogueError('network_error');}
+  if(!response.ok) throw catalogueError('upstream_http_'+response.status);
+  if(Number(response.headers.get('Content-Length') || 0)>3000000) throw catalogueError('response_too_large');
+  const reader=response.body?.getReader(),chunks=[];let length=0;
+  if(reader) {
+    try {
+      while(true) {
+        const {done,value}=await reader.read();if(done)break;
+        length+=value.length;
+        if(length>3000000){await reader.cancel();throw catalogueError('response_too_large');}
+        chunks.push(value);
+      }
+    } catch(error) {throw error.code==='response_too_large'?error:catalogueError('response_read_failed');}
+  }
+  const bytes=new Uint8Array(length);let offset=0;
+  for(const chunk of chunks){bytes.set(chunk,offset);offset+=chunk.length;}
+  let data;try {data=JSON.parse(new TextDecoder().decode(bytes));}catch {throw catalogueError('invalid_json');}
+  const now=Date.now();let games;
+  try {games=freeGames(data,now);}catch {throw catalogueError('invalid_catalogue');}
+  return {mode:'manual',country:'TW',updated_at:new Date(now).toISOString(),games};
 }
 
 export function linksStatus(snapshot,error=null,now=Date.now()) {

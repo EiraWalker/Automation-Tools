@@ -46,10 +46,12 @@ test('fetch reads one fixed public URL without Epic cookies, authorization, or r
   const calls=[];
   const result=await fetchCatalogue(async(url,options)=>{calls.push({url,options});return Response.json(catalogue());});
   assert.equal(calls.length,1);assert.equal(calls[0].url,catalogueUrl);
-  assert.equal(calls[0].options.method,'GET');assert.equal(calls[0].options.redirect,'error');
+  assert.equal(calls[0].options.method,'GET');assert.equal(calls[0].options.redirect,'manual');
   assert.deepEqual(calls[0].options.headers,{Accept:'application/json'});
   assert.equal(result.mode,'manual');assert.equal(result.games.length,1);
   await assert.rejects(fetchCatalogue(async()=>new Response('',{status:503})));
+  await assert.rejects(fetchCatalogue(async()=>new Response('',{status:302})));
+  await assert.rejects(fetchCatalogue(async()=>new Response(new Uint8Array(3000001))),{code:'response_too_large'});
 });
 
 test('old authorization and renewal endpoints and local exporter cannot access credentials',async()=>{
