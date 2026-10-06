@@ -96,9 +96,11 @@ function classify(response, body) {
 }
 
 export class EpicAPI {
-  constructor(secret, fetcher = fetch) { this.secret = secret; this.fetcher = fetcher; this.deadline=Date.now()+150000; }
+  constructor(secret, fetcher = fetch, browserSession = null) { this.secret = secret; this.fetcher = fetcher;this.browserSession=browserSession; this.deadline=Date.now()+150000;this.cookies=[]; }
   async request(url, options = {}, html = false) {
     let response;
+    const path=new URL(url).pathname;
+    this.diagnostic={operation:path.endsWith('/oauth/exchange')?'oauth_exchange':path.endsWith('/oauth/token')?'oauth_token':path.endsWith('/order-preview')?'order_preview':path.endsWith('/confirm-order')?'order_confirm':'epic_api',http_status:null};
     const remaining=this.deadline-Date.now();
     if(remaining<=0) throw new EpicError('epic_unavailable');
     try {
@@ -106,7 +108,11 @@ export class EpicAPI {
       // native fetch as this.fetcher(...) can fail with Illegal invocation.
       response = await this.fetcher.call(globalThis,url, {...options, redirect:'manual', signal:AbortSignal.timeout(Math.min(20000,remaining))});
     } catch { throw new EpicError('epic_unavailable'); }
+    this.diagnostic.http_status=response.status;
     if (response.status >= 300 && response.status < 400) throw new EpicError('verification_required');
+    return this.responseData(response,html);
+  }
+  async responseData(response,html=false) {
     if (Number(response.headers.get('Content-Length') || 0) > 3000000) throw new EpicError('epic_unavailable');
     // Bound streamed bodies too; an absent Content-Length does not relax the cap.
     const reader = response.body?.getReader();
@@ -126,7 +132,10 @@ export class EpicAPI {
     const text = new TextDecoder().decode(bytes);
     let body;
     if (!html) { try { body = JSON.parse(text); } catch { throw new EpicError('epic_unavailable'); } }
-    if (!response.ok || body?.errorCode || body?.error || body?.orderResponse?.error) throw new EpicError(classify(response, body));
+    if (!response.ok || body?.errorCode || body?.error || body?.orderResponse?.error) {
+      if(typeof body?.errorCode==='string' && /^errors\.com\.epicgames\.[a-zA-Z0-9_.]{1,150}$/.test(body.errorCode)) this.diagnostic.error_code=body.errorCode;
+      throw new EpicError(classify(response, body));
+    }
     return html ? text : body;
   }
   async token(grant, value) {
@@ -145,6 +154,76 @@ export class EpicAPI {
       expires_at:data.expires_at, refresh_expires_at:data.refresh_expires_at};
   }
   auth(session) { return {Authorization:'Bearer '+session.access_token}; }
+  cookieHeader(url) {
+    const u=new URL(url),now=Date.now();
+    return this.cookies.filter(c=>c.expires>now && (u.hostname===c.domain || (c.subdomains && u.hostname.endsWith('.'+c.domain))) &&
+      (u.pathname===c.path || u.pathname.startsWith(c.path.endsWith('/')?c.path:c.path+'/'))).map(c=>c.name+'='+c.value).join('; ');
+  }
+  rememberCookies(response,url) {
+    const u=new URL(url);
+    const values=response.headers.getSetCookie?.() || response.headers.getAll?.('Set-Cookie') || (response.headers.get('Set-Cookie') || '').split(/,(?=\s*[^;,=\s]+=)/);
+    for(const line of values) {
+      const [pair,...attributes]=line.split(';'),at=pair.indexOf('=');
+      const name=pair.slice(0,at).trim(),value=pair.slice(at+1).trim();
+      if(at<1 || !/^[A-Za-z0-9_-]{1,100}$/.test(name) || /[\x00-\x20\x7f;]/.test(value) || value.length>8192) continue;
+      const attrs=Object.fromEntries(attributes.map(x=>{const i=x.indexOf('=');return [x.slice(0,i<0?undefined:i).trim().toLowerCase(),i<0?'':x.slice(i+1).trim()];}));
+      const domain=(attrs.domain || u.hostname).replace(/^\./,'').toLowerCase();
+      if(domain!=='epicgames.com' && !domain.endsWith('.epicgames.com')) continue;
+      if(u.hostname!==domain && !u.hostname.endsWith('.'+domain)) continue;
+      const path=attrs.path?.startsWith('/')?attrs.path:'/',subdomains=Boolean(attrs.domain);
+      const expires=attrs['max-age']!==undefined?Date.now()+Number(attrs['max-age'])*1000:attrs.expires?Date.parse(attrs.expires):Date.now()+8*3600000;
+      this.cookies=this.cookies.filter(c=>!(c.name===name && c.domain===domain && c.path===path));
+      if(Number.isFinite(expires) && expires>Date.now()) this.cookies.push({name,value,domain,path,subdomains,expires});
+    }
+    if(this.cookies.length>100 || this.cookieHeader(PAYMENT).length>20000) throw new EpicError('checkout_action_required');
+  }
+  async webSession(session) {
+    const exchange=await this.request(ACCOUNT+'/oauth/exchange',{headers:this.auth(session)});
+    if(!validId(exchange.code)) throw new EpicError('checkout_action_required');
+    const url=new URL('https://www.epicgames.com/id/exchange');
+    url.search=new URLSearchParams({exchangeCode:exchange.code,redirectUrl:'https://store.epicgames.com/'});
+    try {await this.webPage(url.href);}
+    catch(error) {
+      if(!this.browserSession || this.diagnostic?.operation!=='web_sso' || this.diagnostic?.http_status!==403) throw error;
+      // The rejected exchange may have been consumed. Obtain a fresh single-use
+      // code for the separately authenticated normal browser helper.
+      const fresh=await this.request(ACCOUNT+'/oauth/exchange',{headers:this.auth(session)});
+      if(!validId(fresh.code))throw new EpicError('checkout_action_required');
+      this.diagnostic={operation:'browser_sso',http_status:null};
+      this.setWebCookies(await this.browserSession(fresh.code));
+    }
+  }
+  setWebCookies(cookies) {
+    if(!Array.isArray(cookies) || cookies.length>100 || !cookies.every(c=>c && typeof c.name==='string' && /^[A-Za-z0-9_-]{1,100}$/.test(c.name) &&
+      typeof c.value==='string' && c.value.length<=8192 && !/[\x00-\x20\x7f;]/.test(c.value) && typeof c.domain==='string' &&
+      (c.domain==='epicgames.com' || /^[a-z0-9.-]+\.epicgames\.com$/.test(c.domain)) &&
+      typeof c.path==='string' && c.path.startsWith('/') && typeof c.subdomains==='boolean' && Number.isFinite(c.expires))) throw new EpicError('checkout_action_required');
+    this.cookies=cookies.filter(c=>c.expires>Date.now());
+    if(this.cookieHeader(PAYMENT).length>20000)throw new EpicError('checkout_action_required');
+  }
+  async webPage(url) {
+    const hosts=new Set(['www.epicgames.com','accounts.epicgames.com','store.epicgames.com','payment-website-pci.ol.epicgames.com']);
+    for(let i=0;i<8;i++) {
+      const u=new URL(url);
+      if(u.protocol!=='https:' || u.username || u.password || !hosts.has(u.hostname)) throw new EpicError('checkout_action_required');
+      if(u.pathname.includes('/login') || u.pathname.includes('/challenge')) throw new EpicError('verification_required');
+      const remaining=this.deadline-Date.now();if(remaining<=0)throw new EpicError('epic_unavailable');
+      let response;
+      this.diagnostic={operation:u.pathname.startsWith('/id/')?'web_sso':u.hostname.includes('payment-website')?'web_checkout':'web_store',http_status:null};
+      try { response=await this.fetcher.call(globalThis,u.href,{redirect:'manual',headers:{Cookie:this.cookieHeader(u.href)},signal:AbortSignal.timeout(Math.min(20000,remaining))}); }
+      catch { throw new EpicError('epic_unavailable'); }
+      this.diagnostic.http_status=response.status;
+      this.rememberCookies(response,u.href);
+      if(response.status>=300 && response.status<400) {
+        const location=response.headers.get('Location');await response.body?.cancel();
+        if(!location)throw new EpicError('checkout_action_required');
+        url=new URL(location,u).href;continue;
+      }
+      if(response.status===401) {await response.body?.cancel();throw new EpicError('checkout_action_required');}
+      return this.responseData(response,true);
+    }
+    throw new EpicError('checkout_action_required');
+  }
   async profile(session) {
     const p = await this.request(ACCOUNT+'/public/account/'+session.account_id, {headers:this.auth(session)});
     if (p.id !== session.account_id || !/^[A-Z]{2}$/.test(p.country)) throw new EpicError('account_action_required');
@@ -172,11 +251,17 @@ export class EpicAPI {
     const url = new URL(PAYMENT);
     url.search = new URLSearchParams({showNavigation:'true',namespace:game.namespace,
       offers:`1-${game.namespace}-${game.id}`});
-    const html = await this.request(url.href,{headers:this.auth(session)},true);
+    if(!this.checkoutReady && !this.cookieHeader(PAYMENT)) {await this.webSession(session);this.checkoutReady=true;}
+    let html;
+    try {html=await this.webPage(url.href);}
+    catch(error) {
+      if(this.diagnostic?.operation!=='web_checkout' || this.diagnostic?.http_status!==401)throw error;
+      this.cookies=[];await this.webSession(session);html=await this.webPage(url.href);
+    }
     const input = html.match(/<input\b[^>]*\bid=["']purchaseToken["'][^>]*>/i)?.[0];
     const purchaseToken = input?.match(/\bvalue=["']([^"']+)["']/i)?.[1];
     if (!purchaseToken || !/^[A-Za-z0-9._~+\/-]{1,2048}$/.test(purchaseToken)) throw new EpicError('checkout_action_required');
-    const headers = {...this.auth(session),'Content-Type':'application/json','x-requested-with':purchaseToken};
+    const headers = {...this.auth(session),Cookie:this.cookieHeader(PAYMENT),'Content-Type':'application/json','x-requested-with':purchaseToken};
     const preview = await this.request(PAYMENT+'/order-preview',{method:'POST',headers,body:JSON.stringify({
       useDefault:true,setDefault:false,namespace:game.namespace,country:null,countryName:null,
       orderId:null,orderComplete:null,orderError:null,orderPending:null,offers:[game.id],offerPrice:''
@@ -188,7 +273,7 @@ export class EpicAPI {
     assertFreeOrder(checkout.preview,game,session.account_id);
     const p = checkout.preview;
     const result=await this.request(PAYMENT+'/confirm-order',{method:'POST',
-      headers:{...this.auth(session),'Content-Type':'application/json','x-requested-with':checkout.purchaseToken},
+      headers:{...this.auth(session),Cookie:this.cookieHeader(PAYMENT),'Content-Type':'application/json','x-requested-with':checkout.purchaseToken},
       body:JSON.stringify({useDefault:true,setDefault:false,namespace:game.namespace,country:game.country,
         countryName:p.countryName,orderId:null,orderComplete:null,orderError:null,orderPending:null,
         offers:p.offers,includeAccountBalance:false,totalAmount:0,affiliateId:'',creatorSource:'',syncToken:p.syncToken})
@@ -223,6 +308,7 @@ export function summary(state,targets=[]) {
     account:{display_name:state.account.display_name,country:state.account.country},
     last_success_at:state.last_success_at || null, refreshed_at:state.refreshed_at || null,
     failure_stage:state.failure_stage || null,
+    failure_detail:state.failure_detail || null,
     refresh_expires_at:state.session.refresh_expires_at,
     refresh_interval_warning:Date.parse(state.session.refresh_expires_at)-Date.now()<13*3600000,
     games:state.games || [], results:Object.values(state.results || {}).slice(-100),
@@ -293,6 +379,7 @@ export class EpicService {
       // Always rotate before the weekly claim, persisting new refresh tokens
       // before any subsequent request can fail.
       const session=await this.renew(state);
+      if(state.web_cookies && this.api.setWebCookies)this.api.setWebCookies(state.web_cookies);
       stage='account_profile';
       state.account = await this.api.profile(session);
       stage='catalog';
@@ -318,6 +405,7 @@ export class EpicService {
         if (state.status !== 'ready' && state.status !== 'epic_unavailable' && state.status !== 'rate_limited') continue;
         stage='checkout_preview';
         const checkout = await this.api.preview(session,game);
+        if(this.api.cookies)state.web_cookies=this.api.cookies;
         assertFreeOrder(checkout.preview,game,state.account.id);
         state.pending[key] = {game,submitted_at:new Date().toISOString(),free_order_verified:true};
         await this.save(state); // Durable journal BEFORE the mutating request.
@@ -341,7 +429,8 @@ export class EpicService {
       return this.view(state);
     } catch (error) {
       state.status = error instanceof EpicError ? error.code : 'epic_unavailable';
-      state.failure_stage=stage;
+      state.failure_stage=stage;state.failure_detail=this.api.diagnostic || null;
+      if(this.api.cookies)state.web_cookies=this.api.cookies;
       await this.save(state);
       return this.view(state);
     }

@@ -1,7 +1,8 @@
 # Epic 每周免费游戏
 
 Epic 与 BundleFoundry 复用同一个所有者私有的 ChatGPT Site，使用不同的领取定时任务。
-Epic 的 HTTP 请求直接由 Sites Worker 执行；Render 继续处理 BundleFoundry。
+Epic 的账号、续期、订单和权益 HTTP 请求由 Sites Worker 执行；
+需要网站登录会话时，可由现有 Render 后端的普通 Chromium 处理官方单次 SSO。
 两种服务分别保存状态、凭据和运行锁，互不覆盖。
 
 ## 责任与凭据
@@ -14,7 +15,7 @@ Epic 的 HTTP 请求直接由 Sites Worker 执行；Render 继续处理 BundleFo
 | Sites 接入的 Cloudflare D1 | 保存 `epic_state` 加密令牌及订单恢复记录；保存不含令牌的 `epic_snapshot` 页面状态 |
 | Sites 运行时秘密变量 | `EPIC_CREDENTIAL_KEY` 保存独立的 32 字节 AES-GCM 密钥；`EPIC_CLIENT_SECRET` 保存所选原生 OAuth 客户端的配置 |
 | ChatGPT 关联任务 | 资产包每日台北时间 09:00、21:00；Epic 每周五 09:00；每日任务只为 Epic 续期凭据 |
-| Render | 仅处理已有 BundleFoundry 任务；不会收到 Epic 代码、令牌或密钥 |
+| Render | 处理 BundleFoundry；Epic 单次 SSO 后备浏览器只收到临时 exchange code，短暂处理 Cookie，不接收刷新令牌或 Epic 解密密钥 |
 
 ```mermaid
 flowchart TB
@@ -26,7 +27,8 @@ flowchart TB
     Secret["Sites 秘密配置：独立 AES-GCM 密钥"] --> Site
     Site <-->|"OAuth 换码、续期；免费订单；权益核验"| Epic
     Site <-->|"加密令牌、恢复记录；安全摘要"| D1[("Cloudflare D1：由 Sites 接入")]
-    Site -->|"已有 BundleFoundry 流程"| Render["Render：BundleFoundry 后端"]
+    Site -->|"已有 BundleFoundry 流程；Epic 临时 SSO 代码"| Render["Render：后端与普通浏览器"]
+    Render -->|"Epic SSO Cookie，仅经认证的 HTTPS 响应"| Site
 ```
 
 Epic 密码、两步验证码不提交给本站。一次性代码只在请求期间用于换取令牌，不写入数据库。
@@ -54,15 +56,28 @@ Epic 密钥不复用 BundleFoundry 的 Fernet 密钥，不进入公开 GitHub �
 
 窗口说明刷新令牌的自动续期与重新授权步骤，并提供 Epic 官方登录链接。
 浏览器已有的 Epic Cookie 可以让官网复用登录，但受同源限制，私有 Site 无法直接读取该 Cookie。
-本站的后端复用 D1 中已经加密保存的 Epic 访问及刷新令牌。
+本站的后端复用 D1 中已经加密保存的 Epic 访问、刷新令牌及网站会话 Cookie。
 用户只需在令牌失效、授权被撤销或官方要求验证时，立即把新的单次授权码提交到窗口。
 成功兑换后才原子替换旧会话，授权码不写入数据库；令牌以 AES-256-GCM 加密保存。
 提交后立即开始当期免费领取及权益核验，输入框在提交和窗口关闭时清空，错误信息显示在窗口内。
 已过期或被使用的授权码返回“授权代码已过期或无效”，需要重新生成，不重复兑换旧代码。
 
 状态中的 `failure_stage` 仅保存失败环节（续期、账号、促销、权益或结账），不保存请求或令牌。
+`failure_detail` 只保存固定操作名、HTTP 状态和经过格式检查的 Epic 错误代码，不保存 URL 查询、响应正文或 Cookie。
 保存过会话不表示凭据仍有效；成功续期和账号权益查询后可恢复之前的登录错误，
 结账失败仍需按实际环节处理，不能把全部失败误判为需要重新授权。
+
+### 网站会话后备浏览器
+
+Sites 用现有访问令牌向 Epic 获取单次 exchange code，调用官方 `/id/exchange` 建立网站 Cookie。
+若 Sites 的普通 HTTP 请求在该入口收到 403，则获取新的单次代码，经独立机器密钥认证的
+HTTPS 请求交给 Render `/internal/epic/web-session`。这不是用户登录入口，不提供网页、截图、
+远程桌面或共享令牌链接；公开 Render 不信任 Sites 用户身份头。
+Render 启动没有用户资料的标准 Chromium，访问固定 Epic 官方 SSO，遇到登录、验证或限制即停止。
+不使用反检测参数、验证码破解，也不填写密码、验证码、年龄或新增协议。
+浏览器关闭后只返回作用域为 Epic 的 Cookie，Render 不保存 Cookie 或浏览器资料。
+Sites 验证 Cookie 作用域和大小，并与 Epic 状态一起用独立 AES-GCM 密钥加密保存到 D1；
+Cookie 按 Epic 签发的有效期复用，不强行延长到一个月。
 
 API 全部位于私有 Sites dispatch 后。`POST /api/epic/connect` 与 `/api/epic/disconnect`
 额外要求 Sites 注入的完整所有者身份、同源 Origin 和 JSON 请求，拒绝仅有平台服务权限的调用。

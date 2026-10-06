@@ -227,6 +227,25 @@ test('private credential mutations reject service-only access and cross-origin r
   assert.equal(content.status,415);
 });
 
+test('official SSO cookies are domain scoped and redirects cannot expose the exchange code',async()=>{
+  const seen=[];
+  const api=new EpicAPI('TEST',async(url,options)=>{
+    seen.push({url,options});
+    if(url.endsWith('/oauth/exchange')) return Response.json({code:'test-exchange'});
+    if(url.includes('/id/exchange?')) return new Response('',{status:302,headers:{Location:'https://store.epicgames.com/',
+      'Set-Cookie':'EPIC_SESSION=test-cookie; Domain=.epicgames.com; Path=/; Secure; HttpOnly'}});
+    return new Response('official page');
+  });
+  await api.webSession(session);
+  assert.equal(seen[1].options.headers.Authorization,undefined);
+  assert.equal(seen[2].options.headers.Cookie,'EPIC_SESSION=test-cookie');
+  assert.equal(api.cookieHeader('https://evil.example/'),'');
+  const cross=new EpicAPI('TEST',async()=>new Response('',{status:302,headers:{Location:'https://evil.example/'}}));
+  await assert.rejects(cross.webPage('https://www.epicgames.com/id/exchange?exchangeCode=test'),e=>e.code==='checkout_action_required');
+  const login=new EpicAPI('TEST',async()=>new Response('',{status:302,headers:{Location:'/id/login'}}));
+  await assert.rejects(login.webPage('https://www.epicgames.com/id/exchange?exchangeCode=test'),e=>e.code==='verification_required');
+});
+
 test('owner page escapes upstream names and serves code without inline scripts',()=>{
   const html=page(null,{connected:true,status:'ready',account:{display_name:'<script>attack()</script>',country:'TW'},games:[],results:[]});
   assert.ok(!html.includes('<script>attack()'));
@@ -248,6 +267,10 @@ test('Worker + real SQLite: owner connect, cloud run, atomic checkpoint, readbac
   const originalFetch=globalThis.fetch;let confirmed=false;
   globalThis.fetch=async(url,options)=>{
     if(url.includes('/oauth/token')) return Response.json(session);
+    if(url.includes('/oauth/exchange')) return Response.json({code:'test-exchange'});
+    if(url.includes('/id/exchange?')) return new Response('',{status:302,headers:{Location:'https://store.epicgames.com/',
+      'Set-Cookie':'EPIC_SESSION=test-cookie; Domain=.epicgames.com; Path=/; Secure; HttpOnly'}});
+    if(url==='https://store.epicgames.com/') return new Response('official page');
     if(url.includes('/public/account/')) return Response.json({...account,displayName:account.display_name});
     if(url.includes('freeGamesPromotions')) return Response.json({data:{Catalog:{searchStore:{elements:[{
       id:game.id,namespace:game.namespace,title:game.title,offerType:'BASE_GAME',items:[{id:'item',namespace:'ns'}],

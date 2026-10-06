@@ -51,7 +51,17 @@ async function epicRoute(request,env,path) {
     ])
   };
   try {
-    const service=new EpicService(repository,env.EPIC_CREDENTIAL_KEY,new EpicAPI(env.EPIC_CLIENT_SECRET),configuredTargets(env));
+    const browserSession=async exchangeCode=>{
+      const origin=new URL(env.RENDER_ORIGIN);
+      if(origin.protocol!=='https:' || origin.username || origin.password || origin.pathname!=='/')throw new EpicError('configuration_required');
+      const response=await fetch(new URL('/internal/epic/web-session',origin),{method:'POST',redirect:'manual',headers:{Authorization:'Bearer '+env.AUTOMATION_SERVICE_TOKEN,'Content-Type':'application/json'},body:JSON.stringify({exchange_code:exchangeCode}),signal:AbortSignal.timeout(60000)});
+      if(response.status>=300 && response.status<400 || Number(response.headers.get('Content-Length') || 0)>128000)throw new EpicError('checkout_action_required');
+      const text=await response.text();if(text.length>128000)throw new EpicError('checkout_action_required');
+      let result;try {result=JSON.parse(text);}catch{throw new EpicError('checkout_action_required');}
+      if(!response.ok)throw new EpicError(['verification_required','run_in_progress'].includes(result.error)?result.error==='run_in_progress'?'epic_unavailable':'verification_required':'checkout_action_required');
+      return result.cookies;
+    };
+    const service=new EpicService(repository,env.EPIC_CREDENTIAL_KEY,new EpicAPI(env.EPIC_CLIENT_SECRET,fetch,browserSession),configuredTargets(env));
     if(path==='/api/epic/connect') return json(await service.connect(body.code));
     if(path==='/api/epic/disconnect') return json(await service.disconnect());
     if(path==='/api/epic/refresh') return json(await service.refresh());

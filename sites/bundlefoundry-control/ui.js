@@ -39,7 +39,7 @@ export function page(bundle, epic) {
   <dialog id="epic-auth" aria-labelledby="epic-auth-title"><h2 id="epic-auth-title">${epic?.connected?'重新授权 Epic':'连接 Epic 账号'}</h2>
   <p>系统会复用已保存的刷新令牌自动续期。仅在 Epic 撤销授权、令牌失效或要求账号验证时，需要重新授权。</p>
   <ol><li><a href="${escape(loginUrl())}" target="_blank" rel="noopener noreferrer">打开 Epic 官方登录</a>。同一浏览器中的有效 Epic 登录 Cookie 可让官网复用登录；如官网要求验证，请在那里完成。</li><li>官方页面返回一次性 <code>authorizationCode</code>。立即将代码或包含它的 JSON 粘贴到下方并提交，不要在聊天中传递。授权码只能使用一次，可能很快过期。</li><li>本站向 Epic 兑换访问令牌和刷新令牌，将它们用 AES-256-GCM 加密保存到数据库。旧授权只在新授权成功后替换，授权码不写入数据库。</li><li>授权成功后立即检查并领取本周免费游戏，再核实游戏库权益。之后每周五台北时间 09:00 领取；每天 09:00、21:00 单独续期令牌，续期不领取游戏。</li></ol>
-  <p class="notice">浏览器的 Epic Cookie 保存在 Epic 域名下，本站无法直接读取。本站会复用服务器已保存的令牌；浏览器 Cookie 用于简化官网重新授权。若提示授权码无效、过期或已使用，请重新打开官方链接获取新代码。</p>
+  <p class="notice">浏览器的 Epic Cookie 保存在 Epic 域名下，本站无法直接读取。本站会复用服务器加密保存的令牌及官方 SSO 网站会话；你浏览器的 Cookie 用于简化官网重新授权。若提示授权码无效、过期或已使用，请重新打开官方链接获取新代码。</p>
   <form id="epic-connect"><label for="epic-code">Epic 一次性授权代码</label><input id="epic-code" type="password" autocomplete="off" maxlength="2000" required spellcheck="false"><button type="submit">重新授权并开始领取</button><button id="epic-auth-close" class="secondary" type="button">关闭</button></form><p id="epic-auth-message" role="status" aria-live="polite"></p></dialog>
   </section>
   <section class="card"><h2>BundleFoundry 免费资产包</h2><span class="badge">${bundle?.project_acceptance_complete?'首次领取已核实':'等待首次领取'}</span><p>每天检查两次 Gmail，自动领取通知中的免费档。</p><p>${escape(recoveryText)}</p><small>最近完成：${date(bundle?.last_success_at)}</small>${bundle?.acceptance?`<p>已确认拥有：<strong>${escape(bundle.acceptance.bundle_title)}</strong></p>`:''}${rows?`<table><thead><tr><th>资产包</th><th>结果</th></tr></thead><tbody>${rows}</tbody></table>`:''}</section>

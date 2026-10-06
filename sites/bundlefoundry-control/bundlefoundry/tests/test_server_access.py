@@ -7,6 +7,25 @@ from server import Status, application
 
 
 class PublicServiceAccessTests(unittest.IsolatedAsyncioTestCase):
+    async def test_epic_browser_requires_machine_authentication_and_never_accepts_a_target_url(self):
+        secret = 's' * 40
+        with patch.dict('os.environ', {'AUTOMATION_SERVICE_TOKEN': secret}):
+            client = TestClient(TestServer(application(Status(), object())))
+            await client.start_server()
+            try:
+                path = '/internal/epic/web-session'
+                denied = await client.post(path, json={'exchange_code': 'a' * 32}, headers={'oai-authenticated-user-email': 'owner@example.com'})
+                self.assertEqual(denied.status, 401)
+                invalid = await client.post(path, json={'exchange_code': 'a' * 32, 'url': 'https://evil.example/'}, headers={'Authorization': 'Bearer ' + secret})
+                self.assertEqual(invalid.status, 400)
+                with patch('epic_session.website_session', return_value={'cookies': []}) as session:
+                    result = await client.post(path, json={'exchange_code': 'a' * 32}, headers={'Authorization': 'Bearer ' + secret})
+                    self.assertEqual(result.status, 200)
+                    self.assertIn('no-store', result.headers['Cache-Control'])
+                    session.assert_called_once_with({'exchange_code': 'a' * 32})
+            finally:
+                await client.close()
+
     async def test_legacy_tokens_and_forged_identity_cannot_reopen_browser(self):
         with patch.dict("os.environ", {
             "LOGIN_ACCESS_TOKEN": "obsolete-viewer",
