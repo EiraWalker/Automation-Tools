@@ -95,6 +95,7 @@ def capture_bundle_session(vault, chrome):
         probe.bind(("127.0.0.1", 0))
         port = probe.getsockname()[1]
     profile = vault.directory / "google-browser"
+    vault.restore_browser_profile()
     profile.mkdir(parents=True, exist_ok=True, mode=0o700)
     profile.chmod(0o700)
     process = subprocess.Popen([chrome, "--user-data-dir=" + str(profile.resolve()),
@@ -118,8 +119,11 @@ def capture_bundle_session(vault, chrome):
             deadline = time.monotonic() + 600
             redirected = False
             while True:
-                response = context.request.get(BASE + "/my-bundles", timeout=30000)
-                props = parse_page(response.body())
+                page = context.pages[0] if context.pages else context.new_page()
+                props = {}
+                if urllib.parse.urlsplit(page.url).hostname == "bundlefoundry.com":
+                    encoded = page.locator("[data-page]").first.get_attribute("data-page", timeout=5000)
+                    props = json.loads(encoded)["props"] if encoded else {}
                 user = props.get("auth", {}).get("user") or {}
                 if user.get("email"):
                     if user["email"].lower() != expected.lower():

@@ -2,6 +2,8 @@
 import json
 import hashlib
 import os
+import io
+import tarfile
 from pathlib import Path
 
 from cryptography.fernet import Fernet
@@ -54,3 +56,19 @@ class Vault:
             f.flush()
             os.fsync(f.fileno())
         os.replace(temp, self.path)
+
+    def restore_browser_profile(self):
+        """Decrypt only when starting a browser; preserve an existing live profile."""
+        profile = self.directory / "google-browser"
+        archive = self.directory / "google-browser.tar.enc"
+        if profile.exists() or not archive.exists():
+            return False
+        data = self.cipher.decrypt(archive.read_bytes())
+        with tarfile.open(fileobj=io.BytesIO(data), mode="r:gz") as saved:
+            for member in saved.getmembers():
+                parts = member.name.split("/")
+                if parts[0] != "google-browser" or ".." in parts or member.issym() or member.islnk():
+                    raise ValueError("Browser archive contains an unsafe path")
+            saved.extractall(self.directory, filter="data")
+        profile.chmod(0o700)
+        return True

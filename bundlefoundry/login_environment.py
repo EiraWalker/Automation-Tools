@@ -76,7 +76,14 @@ class Gateway:
             # Compare to the original public Host, preserved by the tunnel.
             if parts.scheme not in ("http", "https") or parts.netloc != request.host:
                 raise web.HTTPForbidden(text="Origin mismatch")
-        response = await handler(request)
+        try:
+            response = await handler(request)
+        except web.HTTPException:
+            raise
+        except Exception:
+            # Playwright exceptions may contain Cookie headers. Never send them
+            # to aiohttp's error logger or include them in an HTTP response.
+            response = web.json_response({"error": "暂时无法完成操作，请稍后重试。"}, status=503)
         if not response.prepared:
             response.headers.update({"Cache-Control": "no-store", "Referrer-Policy": "no-referrer", "X-Content-Type-Options": "nosniff"})
         return response
@@ -114,11 +121,13 @@ class Gateway:
             if not self.browser or self.profile_encrypted:
                 return False
             context = self.browser.contexts[0]
-            # Do not poll the site's session while the Google callback is pending.
-            if not any(urllib.parse.urlsplit(page.url).hostname == "bundlefoundry.com" for page in context.pages):
+            # Use the real browser's authenticated page. APIRequestContext can
+            # bypass the environment proxy and include cookies in exceptions.
+            page = next((page for page in context.pages if urllib.parse.urlsplit(page.url).hostname == "bundlefoundry.com"), None)
+            if page is None:
                 return False
-            response = await context.request.get(BASE + "/my-bundles", timeout=15000)
-            props = parse_page(await response.body())
+            encoded = await page.locator("[data-page]").first.get_attribute("data-page", timeout=5000)
+            props = json.loads(encoded)["props"] if encoded else {}
             email = (props.get("auth", {}).get("user") or {}).get("email", "").lower()
             if not email or email != self.expected_account:
                 return False

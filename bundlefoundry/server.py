@@ -6,7 +6,6 @@ import threading
 from vault import Vault
 from worker import Queue, run
 from aiohttp import web
-from login_relay import LoginRelay
 
 
 class Status:
@@ -34,7 +33,8 @@ def application(status):
 
     for path in ("/", "/health", "/status"):
         app.router.add_get(path, health)
-    LoginRelay().install(app)
+    # Interactive verification belongs behind owner-private ChatGPT Sites OAuth.
+    # Never mount the legacy shared-token browser relay on the public Render app.
     return app
 
 

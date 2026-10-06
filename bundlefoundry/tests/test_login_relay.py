@@ -3,7 +3,10 @@ import base64
 import tempfile
 import time
 import unittest
-from unittest.mock import patch
+import io
+import tarfile
+from pathlib import Path
+from unittest.mock import patch, AsyncMock
 
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
@@ -45,6 +48,38 @@ class GatewayTests(unittest.IsolatedAsyncioTestCase):
         self.gate.deadline = time.time() - 1
         response = await self.client.post("/api/unlock", json={"token": self.gate.token}, headers={"Origin": self.origin})
         self.assertEqual(response.status, 403)
+
+    async def test_browser_exception_is_sanitized_instead_of_logging_credentials(self):
+        self.gate.capture = AsyncMock(side_effect=RuntimeError("Cookie: synthetic-secret"))
+        response = await self.client.post("/api/finish", json={}, headers={"Origin": self.origin, "Cookie": "login_access="+self.gate.token})
+        self.assertEqual(response.status, 503)
+        self.assertNotIn("synthetic-secret", await response.text())
+
+
+class ProfileTests(unittest.TestCase):
+    def test_encrypted_profile_round_trip_preserves_session_without_overwriting_live_files(self):
+        with tempfile.TemporaryDirectory() as root:
+            vault = Vault(root)
+            gate = Gateway(vault, Path(root)/"access", "owner@example.com", root)
+            profile = Path(root)/"google-browser"
+            profile.mkdir(mode=0o700)
+            (profile/"Cookies").write_text("synthetic-session")
+            gate.encrypt_profile(profile)
+            self.assertFalse(profile.exists())
+            self.assertTrue(vault.restore_browser_profile())
+            self.assertEqual((profile/"Cookies").read_text(), "synthetic-session")
+            self.assertFalse(vault.restore_browser_profile())
+
+    def test_browser_archive_cannot_extract_outside_profile(self):
+        with tempfile.TemporaryDirectory() as root:
+            vault = Vault(root)
+            raw = io.BytesIO()
+            with tarfile.open(fileobj=raw, mode="w:gz") as archive:
+                member = tarfile.TarInfo("../outside");member.size=1
+                archive.addfile(member, io.BytesIO(b"x"))
+            (Path(root)/"google-browser.tar.enc").write_bytes(vault.cipher.encrypt(raw.getvalue()))
+            with self.assertRaises(ValueError):
+                vault.restore_browser_profile()
 
 
 class RelayTests(unittest.IsolatedAsyncioTestCase):

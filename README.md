@@ -2,6 +2,8 @@
 
 云端自动化工具集合。第一个工具是 [BundleFoundry 免费档自动领取](bundlefoundry/README.md)。
 
+今后的交互验证入口使用 **owner-private ChatGPT Sites OAuth**。Render 仅提供无私人资料的健康状态，不提供浏览器登录网页。配置边界与参考项目见 [私有验证入口](docs/private-verification.md)。
+
 程序每天检查 Gmail 两次（每 12 小时一次，启动时进行首次检查），领取邮件中仍有免费额度的 Bundle，并在网站账户中核实结果。只使用免费领取接口，不创建付费交易。
 
 ## 部署

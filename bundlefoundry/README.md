@@ -8,11 +8,11 @@
 
 ## 首次授权（在你自己的电脑完成）
 
-也可使用受保护的临时云浏览器完成 BundleFoundry Google 登录。`login_environment.py` 连接一个正常的、带界面的 Chrome 和仅监听 localhost 的 VNC 服务；`login_agent.py` 主动通过 HTTPS/WebSocket 连接 Render，`login_relay.py` 中转桌面和页面请求。用户直接在真实 Google 页面输入密码与验证码，程序不记录键盘、剪贴板、浏览器画面或 HTTP 授权头。专属入口令牌与代理令牌分离，设置 24 小时有效期，Cookie 为 HttpOnly / Secure / SameSite=Strict。未配置秘密变量时，中转入口关闭。
+远程交互授权必须通过 **owner-private ChatGPT Sites OAuth**，配置遵循 [私有验证入口](../docs/private-verification.md)。`server.py` 不再挂载 Render 浏览器中转入口，旧 `LOGIN_*` 变量也不能重新开启它。历史临时中转脚本仅保留为本地组件，不能直接公开部署。
 
 Google 登录资料在使用期间保存在专用、权限为 700 的 Chrome profile 中；登录成功后，只把 BundleFoundry 域名的 HTTPS cookie 保存到加密 vault。点击“保存并关闭浏览器”后，Chrome 资料压缩加密为 `state/google-browser.tar.enc`，并删除本次 profile 的明文目录，供后续安全复用。云浏览器登录不等于 Gmail API 授权；邮箱后台仍需要下述只读 OAuth 配置。临时浏览器依赖当前 Codex 环境存活，不承担长期监听。
 
-Render 中转秘密变量：`LOGIN_ACCESS_TOKEN`、`LOGIN_AGENT_TOKEN`、`LOGIN_SESSION_EXPIRES_AT`。它们不得提交源码。访问令牌只放在专属链接的 URL fragment 中，页面交换访问 Cookie 后立即从地址栏移除；入口密钥与 Google 凭据均不得出现在日志中。
+此次临时入口令牌已撤销，浏览器已关闭。未来在 Sites 内完成访问认证，服务端密钥单独保护后端通道；不使用 URL fragment 中的共享令牌替代 OAuth。Google 凭据不得进入日志或公开页面。
 
 1. 在自己的 Google Cloud 项目中开启 Gmail API，配置 OAuth consent screen，并创建 **Desktop app** OAuth client，下载 JSON。权限只申请 `gmail.readonly`。若 consent screen 为 External / Testing，含 Gmail 权限的 refresh token 通常在 7 天后过期；长期运行需切换到适当的发布状态并遵循 Google 的要求。参见 [Google refresh token 过期规则](https://developers.google.com/identity/protocols/oauth2#expiration)。
 2. 安装 Python 3.12+ 和 Google Chrome，下载本目录，运行：
@@ -28,7 +28,7 @@ Windows 激活命令为 `.venv\Scripts\activate`。
 
 授权脚本优先验证已有凭据；有效时直接复用，不打开浏览器，也不重复请求 Google consent。首次运行才打开 Gmail 只读授权页面及专用 Chrome 窗口。网站登录失效时，它先复用专用浏览器的登录状态，再进入 Google 登录流程；需要二次验证时由你完成。脚本自动检测网站登录完成，并核对两个服务的账号一致，无需在终端按 Enter。
 
-无需把 Google 密码发送给助手。云端只保存 Gmail refresh token 与 BundleFoundry 域名的 HTTPS cookies。Google 浏览器 cookies 留在你电脑的 `state/google-browser`，不会上传。凭据使用 Fernet 加密，文件仅允许当前用户访问；云端密钥放在平台的秘密环境变量。
+无需把 Google 密码发送给助手。领取后端只保存 Gmail refresh token 与 BundleFoundry 域名的 HTTPS cookies；Google profile 在登录环境中加密归档，启动浏览器时才解密恢复，不导入领取后端。凭据使用 Fernet 加密，文件仅允许当前用户访问；云端密钥放在平台的秘密环境变量。
 
 ### 跨月复用策略
 
@@ -75,7 +75,7 @@ python setup_auth.py --bundle-only
 
 `python worker.py --verify-e2e` 执行一次真实业务循环，并且只有存在上述成功证据时才返回退出码 0；缺少授权返回 2，尚无成功记录返回 3。本地运行可排查登录，但不能替代目标云服务上的部署验收。`--acceptance-status` 可在服务终端读取完整验收记录；记录只保存在私有状态目录。公开 `/status` 仅返回 `project_acceptance_complete` 布尔值，不返回邮件、账号或 cookie。
 
-已拥有的资产（`already_owned`）、种子邮件、模拟测试、免费额度查询及单纯 HTTP 200 均不通过这个验收条件。验收完成仍保持每日两次检查，不因首次成功关闭长期自动化。交付还须确认目标服务使用常驻计划、持久磁盘，以及 `CONTINUOUS_POLLING_ENABLED=true`、`POLL_SECONDS=43200`。目前尚未完成真实授权和新领取，不能标记项目已完成。
+已拥有的资产（`already_owned`）、种子邮件、模拟测试、免费额度查询及单纯 HTTP 200 均不通过这个验收条件。验收完成仍保持每日两次检查，不因首次成功关闭长期自动化。交付还须确认目标服务使用常驻计划、持久磁盘，以及 `CONTINUOUS_POLLING_ENABLED=true`、`POLL_SECONDS=43200`。目前 BundleFoundry 登录已真实验证并加密保存，但仍缺 Gmail API refresh token、常驻计划和持久磁盘，尚无真实新领取验收记录，不能标记项目已完成。
 
 ## Render 持续运行
 
