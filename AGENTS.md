@@ -10,7 +10,8 @@ Use the configuration pattern in
 especially `docs/plugin.md` and `SECURITY.md`. The repository-specific requirements
 are in [docs/private-verification.md](docs/private-verification.md).
 
-Render exposes health/status only. Do not mount the legacy `LoginRelay` there,
+Render exposes public health/status and a separately authenticated machine API.
+Never expose an interactive verification page there. Do not mount the legacy `LoginRelay`,
 even if old `LOGIN_*` environment variables still exist. Sites identity headers
 are trusted only at the Sites authenticated hosting boundary, never on public Render.
 Use a separate backend service credential stored in platform secrets if a private

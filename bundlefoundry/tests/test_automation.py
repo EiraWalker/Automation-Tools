@@ -111,6 +111,18 @@ class SiteTests(unittest.TestCase):
                 self.site.resolve(TRACKED)
             request.assert_called_once_with(TRACKED)
 
+    def test_tracker_html_refresh_resolves_without_executing_scripts(self):
+        body = f'<noscript><meta http-equiv="refresh" content="0.0;{URL}"></noscript><script>throw Error()</script>'.encode()
+        with patch.object(self.site, "request", return_value=Response(200, {}, body)):
+            self.assertEqual(self.site.resolve(TRACKED), URL)
+
+    def test_html_refresh_rejects_untrusted_or_ambiguous_destinations(self):
+        for body in ('<meta http-equiv="refresh" content="0;url=https://evil.example/">',
+                     f'<meta http-equiv="refresh" content="0;{URL}"><meta http-equiv="refresh" content="0;{BASE}/bundle/other">'):
+            with patch.object(self.site, "request", return_value=Response(200, {}, body.encode())):
+                with self.assertRaises(RetryLater):
+                    self.site.resolve(TRACKED)
+
 
 class MailTests(unittest.TestCase):
     def test_authenticated_notification_extracts_bundle_not_unsubscribe(self):

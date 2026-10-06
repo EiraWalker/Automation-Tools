@@ -10,6 +10,7 @@ import urllib.parse
 import urllib.request
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from html.parser import HTMLParser
 
 BASE = "https://bundlefoundry.com"
 TRACKER = "mlwgg.r.sp1-brevo.net"
@@ -54,6 +55,28 @@ def allowed_link(url):
         return False
     return (p.hostname == "bundlefoundry.com" and SLUG.fullmatch(p.path) is not None) or (
         p.hostname == TRACKER and p.path.startswith("/mk/cl/"))
+
+
+def refresh_destination(body):
+    """Brevo can return an HTML refresh instead of an HTTP Location header."""
+    class Refresh(HTMLParser):
+        def __init__(self):
+            super().__init__()
+            self.targets = []
+
+        def handle_starttag(self, tag, attrs):
+            values = dict(attrs)
+            if tag == "meta" and values.get("http-equiv", "").lower() == "refresh":
+                match = re.fullmatch(r"\s*\d+(?:\.\d+)?\s*;\s*(?:url\s*=\s*)?(.+?)\s*", values.get("content", ""), re.I)
+                if match:
+                    self.targets.append(match[1].strip("\"'"))
+
+    parser = Refresh()
+    parser.feed(body.decode("utf-8", "replace"))
+    targets = list(dict.fromkeys(parser.targets))
+    if len(targets) != 1 or not allowed_link(targets[0]):
+        raise RetryLater("email tracking refresh is missing or untrusted")
+    return targets[0]
 
 
 class BundleFoundry:
@@ -114,6 +137,9 @@ class BundleFoundry:
             if p.hostname == "bundlefoundry.com":
                 return BASE + p.path.rstrip("/")
             r = self.request(url)
+            if r.status == 200:
+                url = refresh_destination(r.body)
+                continue
             if r.status not in (301, 302, 303, 307, 308) or not r.headers.get("Location"):
                 raise RetryLater("email tracking link could not be resolved")
             url = urllib.parse.urljoin(url, r.headers["Location"])

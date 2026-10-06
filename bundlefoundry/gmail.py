@@ -55,8 +55,8 @@ def newsletter_links(message):
     def visit(part):
         body = part.get("body", {})
         text = body.get("content")
-        if text is None and body.get("data"):
-            raw = body["data"]
+        if text is None and (body.get("data") or body.get("base64_url_content")):
+            raw = body.get("data") or body["base64_url_content"]
             text = base64.urlsafe_b64decode(raw + "=" * (-len(raw) % 4)).decode("utf-8", "replace")
         if text and part.get("mimeType", part.get("mime_type")) == "text/html":
             parser = Links()
