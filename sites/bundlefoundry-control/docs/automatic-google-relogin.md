@@ -48,7 +48,21 @@ Render 不提供登录、桌面或 WebSocket 浏览器入口。
 
 ## Google 要求重新验证时
 
-所有者打开私有 Site 的 `/google-authorization`，下载本地授权脚本。
+首选私有 Site 的 `/google-authorization` 远程浏览器入口，额外要求所有者身份。
+用户直接在画面中的 Google 官方页面操作，进入 BundleFoundry 后点击“保存并测试”。
+Chromium 运行于临时 Codex 工作环境；Sites 对每次画面读取和输入操作核验所有者身份，
+使用后端服务密钥调用 Render 的机器 API。Render 不托管交互网页、不信任外部身份头。
+Codex 浏览器代理以独立的 `GOOGLE_BROWSER_AGENT_TOKEN` 连接机器 API，
+HTTPS 传输画面与一次性输入队列；帧、输入和导入资料仅在内存中暂存，不写日志或数据库。
+会话 15 分钟过期，关闭、过期和提交后清除帧及输入；代理停止 Chrome 后才归档，
+删除临时明文 profile。代理保留独立加密的恢复备份，不记录密码、验证码或截图。
+Render 核实账号并加密新资料，私有 Site 保存 checkpoint，然后执行云端失效测试。
+定时任务只有平台服务身份，不能操作远程浏览器；此入口依赖临时 Codex 环境在线。
+日常自动重登录仍由 Render 执行，不依赖这个临时人工授权代理。
+
+以下本地脚本方式作为备用入口 `/google-authorization/local` 保留：
+
+所有者打开该备用入口，下载本地授权脚本。
 在自己的电脑安装 Python 3 和 Chrome，执行 `python -m pip install playwright`，
 再运行下载的 `google-local-auth.py`。输入预期邮箱，在专用 Chrome 窗口的
 Google 官方页面完成登录；脚本核对 BundleFoundry 邮箱，导出 Google 与网站会话。

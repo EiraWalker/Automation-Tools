@@ -64,6 +64,38 @@ def application(status, vault=None):
 
         app.router.add_post("/internal/run", cloud_run)
 
+        from google_browser import GoogleBrowserBridge, BrowserBridgeError
+        bridge = GoogleBrowserBridge()
+
+        async def google_browser(request):
+            agent = request.match_info['action'] == 'agent'
+            secret = os.getenv('GOOGLE_BROWSER_AGENT_TOKEN' if agent else 'AUTOMATION_SERVICE_TOKEN', '')
+            if len(secret)<32 or not hmac.compare_digest(request.headers.get('Authorization',''),'Bearer '+secret):
+                return web.json_response({'error':'unauthorized'},status=401)
+            try:
+                action=request.match_info['action']
+                if action=='state' and request.method=='GET':result=bridge.view()
+                elif request.method!='POST':return web.json_response({'error':'not_found'},status=404)
+                elif action=='start':result=bridge.start()
+                elif action=='input':result=bridge.input(await request.json())
+                elif action=='agent':result=bridge.agent(await request.json())
+                elif action=='commit':
+                    if lock.locked():return web.json_response({'error':'run_in_progress'},status=409)
+                    async with lock:
+                        payload=await request.json()
+                        payload['google_session_import']=bridge.artifact()
+                        result=await asyncio.to_thread(run_external,payload,vault)
+                        bridge.committed()
+                else:return web.json_response({'error':'not_found'},status=404)
+                return web.json_response(result,headers={'Cache-Control':'private, no-store'})
+            except BrowserBridgeError as error:
+                return web.json_response({'error':error.code},status=409)
+            except Exception as error:
+                logging.warning('private Google browser issue=%s',type(error).__name__)
+                return web.json_response({'error':'browser_action_incomplete'},status=503)
+
+        app.router.add_route('*','/internal/google-browser/{action}',google_browser)
+
         async def epic_web_session(request):
             secret = os.getenv("AUTOMATION_SERVICE_TOKEN", "")
             if len(secret) < 32 or not hmac.compare_digest(request.headers.get("Authorization", ""), "Bearer " + secret):

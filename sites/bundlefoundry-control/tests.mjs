@@ -42,7 +42,7 @@ test('Google import rejects wrong account and claim batches before accessing the
 });
 
 test('private Google authorization page and local exporter do not include service credentials',async()=>{
-  const page=await worker.fetch(new Request('https://private.test/google-authorization'),env);
+  const page=await worker.fetch(new Request('https://private.test/google-authorization/local'),env);
   assert.equal(page.status,200);
   assert.match(page.headers.get('Content-Security-Policy'),/script-src 'self'/);
   assert.match(await page.text(),/google-session-import.json/);
@@ -56,4 +56,22 @@ test('private Google authorization page and local exporter do not include servic
   const code=await exporter.text();
   assert.ok(code.includes('Browser.close'));
   assert.ok(!code.includes('CREDENTIAL_KEY'));
+});
+
+test('all remote browser actions and frames require signed-in owner, with same-origin writes',async()=>{
+  for(const action of ['state','start','input','commit','test']) {
+    const get=action==='state';
+    const request=new Request('https://private.test/api/google-browser/'+action,get?{}:{method:'POST',headers:{Origin:'https://private.test','Content-Type':'application/json'},body:'{}'});
+    assert.equal((await worker.fetch(request,env)).status,403);
+    if(!get){
+      const cross=new Request(request.url,{method:'POST',headers:{...owner,Origin:'https://evil.test','Content-Type':'application/json'},body:'{}'});
+      assert.equal((await worker.fetch(cross,env)).status,403);
+    }
+  }
+  const page=await worker.fetch(new Request('https://private.test/google-authorization'),env);
+  assert.equal(page.status,200);
+  assert.ok((await page.text()).includes('保存并测试'));
+  const js=await worker.fetch(new Request('https://private.test/google-authorization/remote.js'),env);
+  const source=await js.text();
+  assert.ok(!source.includes('console.'));assert.ok(!source.includes('localStorage'));
 });

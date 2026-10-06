@@ -7,6 +7,34 @@ from server import Status, application
 
 
 class PublicServiceAccessTests(unittest.IsolatedAsyncioTestCase):
+    async def test_google_bridge_separates_gateway_and_agent_credentials_and_rejects_forged_identity(self):
+        gateway, agent = 'gateway-' + 's' * 40, 'agent-' + 'a' * 40
+        with patch.dict('os.environ', {'AUTOMATION_SERVICE_TOKEN':gateway,'GOOGLE_BROWSER_AGENT_TOKEN':agent}):
+            client=TestClient(TestServer(application(Status(),object())))
+            await client.start_server()
+            try:
+                spoof={'oai-authenticated-user-id':'owner','oai-authenticated-user-email':'owner@example.com'}
+                for action in ('start','input','agent','commit'):
+                    response=await client.post('/internal/google-browser/'+action,json={},headers=spoof)
+                    self.assertEqual(response.status,401)
+                response=await client.get('/internal/google-browser/state',headers=spoof)
+                self.assertEqual(response.status,401)
+                response=await client.post('/internal/google-browser/agent',json={},headers={'Authorization':'Bearer '+gateway})
+                self.assertEqual(response.status,401)
+                response=await client.post('/internal/google-browser/start',json={},headers={'Authorization':'Bearer '+agent})
+                self.assertEqual(response.status,401)
+                response=await client.post('/internal/google-browser/start',json={},headers={'Authorization':'Bearer '+gateway})
+                self.assertEqual(response.status,200)
+                identity=(await response.json())['id']
+                response=await client.post('/internal/google-browser/agent',json={'id':identity,'phase':'interactive'},headers={'Authorization':'Bearer '+agent})
+                self.assertEqual(response.status,200)
+                self.assertEqual((await response.json())['commands'],[{'operation':'start'}])
+                response=await client.get('/internal/google-browser/state',headers={'Authorization':'Bearer '+gateway})
+                self.assertEqual(response.status,200)
+                self.assertIn('no-store',response.headers['Cache-Control'])
+                self.assertNotIn('artifact',await response.json())
+            finally:await client.close()
+
     async def test_epic_browser_requires_machine_authentication_and_never_accepts_a_target_url(self):
         secret = 's' * 40
         with patch.dict('os.environ', {'AUTOMATION_SERVICE_TOKEN': secret}):

@@ -2,6 +2,7 @@ import {EpicAPI,EpicService,EpicError,summary,configuredTargets} from './epic.js
 import {page,clientScript} from './ui.js';
 import epicLocalExporter from './epic-local-auth.js';
 import {googleAuthorizationPage,googleAuthorizationScript,localExporter} from './google-authorization.js';
+import {googleRemotePage,googleRemoteScript} from './google-remote.js';
 const headers = {'Cache-Control':'private, no-store','X-Content-Type-Options':'nosniff','Referrer-Policy':'no-referrer'};
 const json = (value, status=200) => Response.json(value,{status,headers});
 
@@ -78,9 +79,9 @@ async function epicRoute(request,env,path) {
   }
 }
 
-async function update(request, env, sessionTest=false, sessionImport=false) {
+async function update(request, env, sessionTest=false, sessionImport=false, browserCommit=false) {
   const origin=request.headers.get('Origin');
-  if(sessionImport && (!isOwner(request,env) || origin!==new URL(request.url).origin)) return json({error:'forbidden'},403);
+  if((sessionImport||browserCommit) && (!isOwner(request,env) || origin!==new URL(request.url).origin)) return json({error:'forbidden'},403);
   if(sessionImport && request.headers.get('Content-Type')?.split(';')[0].toLowerCase()!=='application/json') return json({error:'invalid_content_type'},415);
   if(sessionImport && Number(request.headers.get('Content-Length')||0)>250000) return json({error:'batch_too_large'},413);
   if (origin && origin !== new URL(request.url).origin) return json({error:'origin_rejected'},403);
@@ -90,6 +91,7 @@ async function update(request, env, sessionTest=false, sessionImport=false) {
   if (text.length>3500000) return json({error:'batch_too_large'},413);
   let body;
   try { body=JSON.parse(text); } catch { return json({error:'invalid_json'},400); }
+  if(browserCommit)body={source_account:env.OWNER_EMAIL,messages:[]};
   if (!Array.isArray(body.messages) || body.messages.length>25 || typeof body.source_account!=='string' || body.source_account.toLowerCase()!==env.OWNER_EMAIL.toLowerCase()) return json({error:'invalid_batch'},400);
   if(sessionImport && (text.length>250000 || body.messages.length || body.google_session_import?.version!==1 || body.google_session_import?.account?.toLowerCase()!==env.OWNER_EMAIL.toLowerCase())) return json({error:'invalid_batch'},400);
   const now=Date.now();
@@ -100,12 +102,12 @@ async function update(request, env, sessionTest=false, sessionImport=false) {
     const checkpoint=await read(env,'checkpoint');
     const origin=new URL(env.RENDER_ORIGIN);
     if(origin.protocol!=='https:' || origin.username || origin.password || origin.pathname!=='/') throw Error('invalid backend origin');
-    const upstream=await fetch(new URL('/internal/run',origin),{method:'POST',redirect:'manual',headers:{'Authorization':'Bearer '+env.AUTOMATION_SERVICE_TOKEN,'Content-Type':'application/json'},body:JSON.stringify({source_account:body.source_account,messages:sessionTest?[]:body.messages,checkpoint_encrypted:checkpoint,...(sessionTest?{session_recovery_test:true}:{}),...(sessionImport?{google_session_import:body.google_session_import}:{})}),signal:AbortSignal.timeout(180000)});
+    const upstream=await fetch(new URL(browserCommit?'/internal/google-browser/commit':'/internal/run',origin),{method:'POST',redirect:'manual',headers:{'Authorization':'Bearer '+env.AUTOMATION_SERVICE_TOKEN,'Content-Type':'application/json'},body:JSON.stringify({source_account:body.source_account,messages:sessionTest?[]:body.messages,checkpoint_encrypted:checkpoint,...(sessionTest?{session_recovery_test:true}:{}),...(sessionImport?{google_session_import:body.google_session_import}:{})}),signal:AbortSignal.timeout(180000)});
     if(!upstream.ok) throw Error('backend unavailable');
     const result=await upstream.json();
     if(typeof result.checkpoint_encrypted!=='string' || !Array.isArray(result.results) || typeof result.project_acceptance_complete!=='boolean') throw Error('invalid result');
     if(sessionTest && result.session_recovery_test?.site_session_valid_after_login!==true) throw Error('session test incomplete');
-    if(sessionImport && result.google_session_imported!==true) throw Error('session import incomplete');
+    if((sessionImport||browserCommit) && result.google_session_imported!==true) throw Error('session import incomplete');
     const previous=await read(env,'snapshot');
     const snapshot={...previous,last_success_at:result.automation_state==='needs_authorization'?previous?.last_success_at:new Date().toISOString(),automation_state:result.automation_state||'running',session_recovery:result.session_recovery||{},pending_messages:result.pending_messages,project_acceptance_complete:result.project_acceptance_complete,acceptance:result.acceptance,results:result.results,...(sessionTest?{session_recovery_test:result.session_recovery_test}:{})};
     await env.DB.batch([
@@ -121,6 +123,24 @@ async function update(request, env, sessionTest=false, sessionImport=false) {
   }
 }
 
+async function googleBrowserRoute(request,env,path){
+  if(!isOwner(request,env))return json({error:'forbidden'},403);
+  const action=path.split('/').pop();
+  if(request.method==='POST'&&request.headers.get('Origin')!==new URL(request.url).origin)return json({error:'forbidden'},403);
+  if(action==='commit'&&request.method==='POST')return update(request,env,false,false,true);
+  if(action==='test'&&request.method==='POST'){
+    const next=new Request(request.url,{method:'POST',headers:request.headers,body:JSON.stringify({source_account:env.OWNER_EMAIL,messages:[]})});
+    return update(next,env,true);
+  }
+  if(!((action==='state'&&request.method==='GET')||(['start','input'].includes(action)&&request.method==='POST')))return json({error:'not_found'},404);
+  const text=request.method==='POST'?await request.text():null;
+  if(text&&text.length>8192)return json({error:'body_too_large'},413);
+  const origin=new URL(env.RENDER_ORIGIN);
+  if(origin.protocol!=='https:'||origin.username||origin.password||origin.pathname!=='/')throw Error('invalid backend origin');
+  const upstream=await fetch(new URL('/internal/google-browser/'+action,origin),{method:request.method,redirect:'manual',headers:{Authorization:'Bearer '+env.AUTOMATION_SERVICE_TOKEN,'Content-Type':'application/json'},...(text===null?{}:{body:text}),signal:AbortSignal.timeout(30000)});
+  return new Response(await upstream.arrayBuffer(),{status:upstream.status,headers:{...headers,'Content-Type':'application/json'}});
+}
+
 export default {
   async fetch(request,env) {
     if(!authorize(request,env)) return json({error:'forbidden'},403);
@@ -131,7 +151,10 @@ export default {
         if(!isOwner(request,env))return json({error:'forbidden'},403);
         return new Response(epicLocalExporter,{headers:{...headers,'Content-Type':'text/x-python; charset=utf-8','Content-Disposition':'attachment; filename="epic-local-auth.py"'}});
       }
-      if(path==='/google-authorization' && request.method==='GET') return new Response(googleAuthorizationPage(),{headers:{...headers,'Content-Type':'text/html; charset=utf-8','Content-Security-Policy':"default-src 'none'; script-src 'self'; connect-src 'self'; form-action 'self'; base-uri 'none'; style-src 'unsafe-inline'; frame-ancestors 'self' https://chatgpt.com"}});
+      if(path.startsWith('/api/google-browser/'))return await googleBrowserRoute(request,env,path);
+      if(path==='/google-authorization' && request.method==='GET') return new Response(googleRemotePage(),{headers:{...headers,'Content-Type':'text/html; charset=utf-8','Content-Security-Policy':"default-src 'none'; script-src 'self'; connect-src 'self'; form-action 'self'; base-uri 'none'; style-src 'unsafe-inline'; img-src data:; frame-ancestors 'self' https://chatgpt.com"}});
+      if(path==='/google-authorization/local' && request.method==='GET')return new Response(googleAuthorizationPage(),{headers:{...headers,'Content-Type':'text/html; charset=utf-8','Content-Security-Policy':"default-src 'none'; script-src 'self'; connect-src 'self'; form-action 'self'; base-uri 'none'; style-src 'unsafe-inline'; frame-ancestors 'self' https://chatgpt.com"}});
+      if(path==='/google-authorization/remote.js' && request.method==='GET')return new Response(googleRemoteScript,{headers:{...headers,'Content-Type':'text/javascript; charset=utf-8'}});
       if(path==='/google-authorization/client.js' && request.method==='GET') return new Response(googleAuthorizationScript,{headers:{...headers,'Content-Type':'text/javascript; charset=utf-8'}});
       if(path==='/google-authorization/export.py' && request.method==='GET') return new Response(localExporter,{headers:{...headers,'Content-Type':'text/x-python; charset=utf-8','Content-Disposition':'attachment; filename="google-local-auth.py"'}});
       if(path==='/api/google/import' && request.method==='POST') return await update(request,env,false,true);
