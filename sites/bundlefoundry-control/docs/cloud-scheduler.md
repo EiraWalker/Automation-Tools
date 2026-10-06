@@ -2,6 +2,9 @@
 
 当前方案复用用户已经连接的 Gmail，避免要求另建 Google OAuth 客户端或导出连接凭据。私有控制入口遵循 [Sites OAuth 要求](private-verification.md)。完整 Site 源码模板在 [sites/bundlefoundry-control](../)。
 
+同一关联任务新增 Epic 步骤：独立 POST `/api/epic/run`，GET `/api/epic/status` 回读。
+Epic 由 Sites Worker 直接执行，不经 Render，不使用 Gmail 凭据；其加密令牌、恢复日志及权限边界见 [Epic 架构](epic-automation.md)。
+
 ## 部署组成
 
 | 组件 | 职责 |

@@ -1,1 +1,1 @@
-{"name":"bundlefoundry-private-control","private":true,"type":"module","scripts":{"build":"node scripts/build.mjs","test":"node --test tests.mjs","db:generate":"drizzle-kit generate"},"devDependencies":{"drizzle-kit":"^0.31.4","drizzle-orm":"^0.44.5"}}
+{"name":"bundlefoundry-private-control","private":true,"type":"module","scripts":{"build":"node scripts/build.mjs","test":"node --test tests.mjs epic.tests.mjs","db:generate":"drizzle-kit generate"},"devDependencies":{"drizzle-kit":"^0.31.4","drizzle-orm":"^0.44.5","esbuild":"^0.28.2"}}

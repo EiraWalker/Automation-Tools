@@ -1,6 +1,7 @@
+import {EpicAPI,EpicService,EpicError,summary} from './epic.js';
+import {page,clientScript} from './ui.js';
 const headers = {'Cache-Control':'private, no-store','X-Content-Type-Options':'nosniff','Referrer-Policy':'no-referrer'};
 const json = (value, status=200) => Response.json(value,{status,headers});
-const escape = s => String(s ?? '').replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 
 export function authorize(request, env) {
   // Dispatch rejects anonymous requests to this owner-private Site. Identity-less
@@ -16,6 +17,50 @@ async function read(env, key) {
 }
 async function write(env, key, value) {
   return env.DB.prepare('INSERT INTO automation_state (key,value,updated_at) VALUES (?,?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at').bind(key,JSON.stringify(value),Date.now()).run();
+}
+
+function isOwner(request,env) {
+  return Boolean(request.headers.get('oai-authenticated-user-id') &&
+    request.headers.get('oai-authenticated-user-email')?.toLowerCase() === env.OWNER_EMAIL?.toLowerCase());
+}
+
+async function epicRoute(request,env,path) {
+  if(path==='/api/epic/status' && request.method==='GET') return json(await read(env,'epic_snapshot') || summary(null));
+  if(request.method!=='POST' || !['/api/epic/connect','/api/epic/disconnect','/api/epic/run'].includes(path)) return json({error:'not_found'},404);
+  const interactive = path !== '/api/epic/run';
+  // Credential changes require a real Sites-authenticated owner, never merely
+  // an identity-less cloud service request. Dispatch supplies these headers.
+  if(interactive && !isOwner(request,env)) return json({error:'forbidden'},403);
+  const origin=request.headers.get('Origin');
+  if((interactive || isOwner(request,env)) && origin !== new URL(request.url).origin) return json({error:'origin_rejected'},403);
+  if(origin && origin !== new URL(request.url).origin) return json({error:'origin_rejected'},403);
+  if(request.headers.get('Content-Type')?.split(';')[0].toLowerCase() !== 'application/json') return json({error:'invalid_content_type'},415);
+  if(Number(request.headers.get('Content-Length') || 0)>4096) return json({error:'body_too_large'},413);
+  const text=await request.text();
+  if(text.length>4096) return json({error:'body_too_large'},413);
+  let body; try { body=JSON.parse(text); } catch { return json({error:'invalid_json'},400); }
+  if(!body || typeof body!=='object' || Array.isArray(body)) return json({error:'invalid_json'},400);
+  const lease=crypto.randomUUID(), now=Date.now();
+  const acquired=await env.DB.prepare('INSERT INTO automation_state (key,value,updated_at) VALUES (?,?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at WHERE automation_state.updated_at<?').bind('epic_lease',JSON.stringify(lease),now,now-10*60*1000).run();
+  if(!acquired.meta.changes) return json({error:'run_in_progress'},409);
+  const repository={
+    read:()=>read(env,'epic_state'),
+    save:(encrypted,snapshot)=>env.DB.batch([
+      env.DB.prepare('INSERT INTO automation_state (key,value,updated_at) VALUES (?,?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at').bind('epic_state',JSON.stringify(encrypted),Date.now()),
+      env.DB.prepare('INSERT INTO automation_state (key,value,updated_at) VALUES (?,?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at').bind('epic_snapshot',JSON.stringify(snapshot),Date.now())
+    ])
+  };
+  try {
+    const service=new EpicService(repository,env.EPIC_CREDENTIAL_KEY,new EpicAPI(env.EPIC_CLIENT_SECRET));
+    if(path==='/api/epic/connect') return json(await service.connect(body.code));
+    if(path==='/api/epic/disconnect') return json(await service.disconnect());
+    return json(await service.run());
+  } catch(error) {
+    const code=error instanceof EpicError?error.code:'epic_unavailable';
+    return json({error:code},code==='invalid_code'?400:503);
+  } finally {
+    await env.DB.prepare('DELETE FROM automation_state WHERE key=? AND value=?').bind('epic_lease',JSON.stringify(lease)).run();
+  }
 }
 
 async function update(request, env, sessionTest=false) {
@@ -56,25 +101,17 @@ async function update(request, env, sessionTest=false) {
   }
 }
 
-function page(snapshot) {
-  const rows=(snapshot?.results||[]).map(r=>`<tr><td>${escape(r.bundle_url.split('/').pop())}</td><td>${escape(({claimed:'已领取',already_owned:'已拥有',sold_out:'免费额度已用完',inactive:'已结束',no_free_tier:'无免费档'})[r.status]||r.status)}</td></tr>`).join('');
-  const receipt=snapshot?.acceptance;
-  const recovery=snapshot?.session_recovery;
-  const recoveryText=snapshot?.automation_state==='needs_authorization'
-    ? 'Google 登入需要你完成驗證，已暫停自動重新登入。'
-    : recovery?.status==='relogged_in' ? '網站會話失效後已自動重新登入，帳號核對通過。' : '網站會話失效時，會嘗試復用已儲存的 Google 登入。';
-  return `<!doctype html><html lang="zh-Hant"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>BundleFoundry 免費領取</title><link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%23132f27'/%3E%3Cpath d='M8 10h16v14H8zM8 14h16M16 10v14' stroke='%23b4e3a9' stroke-width='2' fill='none'/%3E%3C/svg%3E"><style>body{margin:0;background:#f4f5ef;color:#193b30;font:16px/1.6 system-ui}main{max-width:850px;margin:64px auto;padding:24px}h1{font-size:32px;margin:0 0 28px}.card{background:#fff;padding:28px;border:1px solid #d5dfd5;border-radius:14px;margin-bottom:20px}.badge{display:inline-block;background:#e2f0dd;border-radius:20px;padding:4px 14px}table{width:100%;border-collapse:collapse}td,th{text-align:left;padding:14px 8px;border-bottom:1px solid #e2e8dd}small{color:#52685d}a{color:inherit}h2{font-size:20px}@media(max-width:600px){main{margin:20px auto;padding:16px}.card{padding:20px}td{overflow-wrap:anywhere}}</style></head><body><main><h1>BundleFoundry 免費領取</h1><section class="card"><span class="badge">私人任務</span><h2>${snapshot?.project_acceptance_complete?'已完成首次領取驗證':'等待首次領取驗證'}</h2><p>每天檢查兩次郵件，只領取免費檔。</p><p>${escape(recoveryText)}</p><small>最近完成：${snapshot?.last_success_at?escape(new Date(snapshot.last_success_at).toLocaleString('zh-TW',{timeZone:'Asia/Taipei'})):'尚未執行'}</small>${receipt?`<p>已確認擁有：<strong>${escape(receipt.bundle_title)}</strong></p>`:''}</section><section class="card"><h2>領取紀錄</h2>${rows?`<table><thead><tr><th>資產包</th><th>結果</th></tr></thead><tbody>${rows}</tbody></table>`:'<p>第一次檢查完成後，紀錄會顯示在這裡。</p>'}</section></main></body></html>`;
-}
-
 export default {
   async fetch(request,env) {
     if(!authorize(request,env)) return json({error:'forbidden'},403);
     const path=new URL(request.url).pathname;
     try {
+      if(path.startsWith('/api/epic/')) return await epicRoute(request,env,path);
+      if(path==='/client.js' && request.method==='GET') return new Response(clientScript,{headers:{...headers,'Content-Type':'text/javascript; charset=utf-8'}});
       if(path==='/api/update' && request.method==='POST') return await update(request,env);
       if(path==='/api/session-recovery/test' && request.method==='POST') return await update(request,env,true);
       if(path==='/api/status' && request.method==='GET') return json(await read(env,'snapshot') || {project_acceptance_complete:false,results:[]});
-      if(path==='/' && request.method==='GET') return new Response(page(await read(env,'snapshot')),{headers:{...headers,'Content-Type':'text/html; charset=utf-8','Content-Security-Policy':"default-src 'none'; style-src 'unsafe-inline'; img-src data:; frame-ancestors 'self' https://chatgpt.com"}});
+      if(path==='/' && request.method==='GET') return new Response(page(await read(env,'snapshot'),await read(env,'epic_snapshot') || summary(null)),{headers:{...headers,'Content-Type':'text/html; charset=utf-8','Content-Security-Policy':"default-src 'none'; script-src 'self'; connect-src 'self'; form-action 'self'; base-uri 'none'; style-src 'unsafe-inline'; img-src data:; frame-ancestors 'self' https://chatgpt.com"}});
       return json({error:'not_found'},404);
     } catch { return json({error:'temporarily_unavailable'},503); }
   }
