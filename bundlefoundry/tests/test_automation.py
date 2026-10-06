@@ -45,6 +45,11 @@ class SiteTests(unittest.TestCase):
         self.vault = Vault(self.temp.name)
         self.vault.save({"account": "owner@example.com", "bundle_cookies": [COOKIE]})
         self.site = BundleFoundry(self.vault)
+        # These existing tests exercise licensed detail-page responses. The
+        # separate PurchaseTests cover the authoritative free purchase endpoint.
+        owned = patch.object(self.site, "purchase", return_value=None)
+        owned.start()
+        self.addCleanup(owned.stop)
 
     def test_free_claim_uses_only_free_endpoint_and_confirms_ownership(self):
         owned = copy.deepcopy(PROPS)
@@ -264,6 +269,11 @@ class PersistenceTests(unittest.TestCase):
 
 
 class AcceptanceTests(unittest.TestCase):
+    def setUp(self):
+        owned = patch.object(BundleFoundry, "purchase", return_value=None)
+        owned.start()
+        self.addCleanup(owned.stop)
+
     def test_live_email_new_claim_records_durable_correlated_evidence(self):
         owned = copy.deepcopy(PROPS)
         owned["owned_license_types"] = ["personal"]

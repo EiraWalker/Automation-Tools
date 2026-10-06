@@ -23,7 +23,7 @@ class ExternalRunnerTests(unittest.TestCase):
             owned = copy.deepcopy(PROPS)
             owned["owned_license_types"] = ["personal"]
             batch = {"source_account": "owner@example.com", "messages": [message(f'<a href="{URL}">View Bundle</a>')]}
-            with patch.dict(os.environ, env), patch.object(BundleFoundry, "request", side_effect=[page_response(PROPS), page_response(PROPS), Response(200, {}, b'{}'), page_response(owned)]):
+            with patch.dict(os.environ, env), patch.object(BundleFoundry, "purchase", return_value=None), patch.object(BundleFoundry, "request", side_effect=[page_response(PROPS), page_response(PROPS), Response(200, {}, b'{}'), page_response(owned)]):
                 result = run_external(batch, v)
             self.assertTrue(result["project_acceptance_complete"])
             self.assertEqual(result["acceptance"]["email_id"], "abc123")

@@ -3,6 +3,7 @@ import json
 import os
 import re
 import tempfile
+import hashlib
 
 from bundlefoundry import BundleFoundry
 from gmail import newsletter_links
@@ -32,6 +33,7 @@ def run_external(payload, bootstrap_vault):
     with tempfile.TemporaryDirectory(prefix="free-bundle-run-") as root:
         vault = Vault(root, key=os.environ["CREDENTIAL_KEY"])
         saved = bootstrap_vault.load()
+        bootstrap_digest = hashlib.sha256(os.environ.get("CREDENTIALS_ENCRYPTED", "").encode()).hexdigest()
         checkpoint = payload.get("checkpoint_encrypted")
         restored = None
         if checkpoint:
@@ -40,7 +42,10 @@ def run_external(payload, bootstrap_vault):
             restored = json.loads(vault.cipher.decrypt(checkpoint.encode()))
             if restored.get("schema_version") != 1 or restored.get("credentials", {}).get("account", "").lower() != expected:
                 raise ValueError("checkpoint account mismatch")
-            saved = restored["credentials"]
+            # Explicit credential updates replace revoked cookies or import an
+            # audited recovery journal; unchanged bootstrap preserves renewals.
+            if restored.get("bootstrap_sha256") == bootstrap_digest:
+                saved = restored["credentials"]
         vault.save(saved)
         # Bootstrap is intentionally loaded before saving renewed state, so later
         # Vault.load calls cannot replace it with stale environment cookies.
@@ -61,7 +66,7 @@ def run_external(payload, bootstrap_vault):
             site.page("https://bundlefoundry.com/my-bundles")
             queue.process(site)
             evidence = queue.acceptance()
-            state = {"schema_version": 1, "credentials": vault.load(), "queue": {
+            state = {"schema_version": 1, "bootstrap_sha256": bootstrap_digest, "credentials": vault.load(), "queue": {
                 table: queue.db.execute(f"SELECT {','.join(columns)} FROM {table}").fetchall()
                 for table, columns in TABLES.items()
             }}

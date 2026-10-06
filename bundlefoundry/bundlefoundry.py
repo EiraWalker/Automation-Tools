@@ -86,6 +86,7 @@ class BundleFoundry:
         saved = vault.load() if vault else {}
         self.account = saved.get("account", "")
         self.claim_receipt = None
+        self.current_message_id = None
         for c in saved.get("bundle_cookies", []):
             if site_cookie(c):
                 domain = c["domain"]
@@ -164,6 +165,13 @@ class BundleFoundry:
         self.claim_receipt = None
         props = self.page(url)
         b = props["bundle"]
+        purchase = self.purchase(b["id"])
+        pending = self.vault.load().get("pending_claims", {}).get(url) if self.vault else None
+        if purchase:
+            if pending and pending.get("bundle_id") == b["id"] and pending.get("new_free_response") is True and pending.get("email_id") == self.current_message_id and pending.get("purchase_id", purchase.get("id")) == purchase.get("id"):
+                self.record_claim(url, b, purchase, pending)
+                return "claimed"
+            return "already_owned"
         # A free owner also has tier_number=0; the license list distinguishes ownership.
         if props.get("owned_license_types"):
             return "already_owned"
@@ -204,14 +212,36 @@ class BundleFoundry:
             if self.page(url).get("owned_license_types"):
                 return "already_owned"
             raise RetryLater("free claim skipped by site")
+        journal = {"bundle_id": b["id"], "claimed_at": claimed_at, "new_free_response": True,
+                   "email_id": self.current_message_id,
+                   "proof_source": "free_api_response", "response_sha256": hashlib.sha256(result.body).hexdigest()}
+        if self.vault:
+            saved = self.vault.load()
+            saved.setdefault("pending_claims", {})[url] = journal
+            self.vault.save(saved)
         verified = self.page(url)
-        if verified.get("bundle", {}).get("id") != b["id"] or not verified.get("owned_license_types"):
+        purchase = self.purchase(b["id"])
+        if verified.get("bundle", {}).get("id") != b["id"] or (not verified.get("owned_license_types") and not purchase):
             raise RetryLater("free claim not yet confirmed in account")
-        self.claim_receipt = {
-            "bundle_url": url, "bundle_id": b["id"], "bundle_title": b["title"],
-            "tier_number": 0, "owned_license_types": verified["owned_license_types"],
-            "account_sha256": hashlib.sha256(self.account.lower().encode()).hexdigest(),
-            "claimed_at": claimed_at, "ownership_verified_at": time.time(),
-            "new_claim": True,
-        }
+        self.record_claim(url, b, purchase, journal, verified.get("owned_license_types"))
         return "claimed"
+
+    def purchase(self, bundle_id):
+        """Free purchases do not populate the detail page's license list."""
+        records = self.page(BASE + "/my-bundles").get("purchases", [])
+        return next((p for p in records if p.get("bundle_id") == bundle_id), None)
+
+    def record_claim(self, url, bundle, purchase, journal, licenses=None):
+        if purchase and (purchase.get("tier") != 0 or str(purchase.get("amount")) not in ("0", "0.0", "0.00")):
+            raise RetryLater("purchase is not the requested free tier")
+        licenses = licenses or ([purchase["license"]] if purchase and purchase.get("license") else [])
+        if not licenses:
+            raise RetryLater("ownership license not confirmed")
+        self.claim_receipt = {
+            "bundle_url": url, "bundle_id": bundle["id"], "bundle_title": bundle["title"],
+            "tier_number": 0, "owned_license_types": licenses,
+            "account_sha256": hashlib.sha256(self.account.lower().encode()).hexdigest(),
+            "claimed_at": journal.get("claimed_at"), "ownership_verified_at": time.time(),
+            "new_claim": True, "purchase_id": purchase.get("id") if purchase else None,
+            "claim_proof": journal,
+        }

@@ -56,6 +56,7 @@ class Queue:
                     result = self.db.execute("SELECT status FROM results WHERE url=?", (url,)).fetchone()
                     if result:
                         continue
+                    site.current_message_id = message_id
                     status = site.claim(url)
                     self.db.execute("INSERT OR REPLACE INTO results VALUES(?,?,?)", (url, status, time.time()))
                     receipt = getattr(site, "claim_receipt", None)
