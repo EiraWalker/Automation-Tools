@@ -1,4 +1,4 @@
-import {EpicAPI,EpicService,EpicError,summary} from './epic.js';
+import {EpicAPI,EpicService,EpicError,summary,configuredTargets} from './epic.js';
 import {page,clientScript} from './ui.js';
 const headers = {'Cache-Control':'private, no-store','X-Content-Type-Options':'nosniff','Referrer-Policy':'no-referrer'};
 const json = (value, status=200) => Response.json(value,{status,headers});
@@ -25,7 +25,7 @@ function isOwner(request,env) {
 }
 
 async function epicRoute(request,env,path) {
-  if(path==='/api/epic/status' && request.method==='GET') return json(await read(env,'epic_snapshot') || summary(null));
+  if(path==='/api/epic/status' && request.method==='GET') return json(await read(env,'epic_snapshot') || summary(null,configuredTargets(env)));
   if(request.method!=='POST' || !['/api/epic/connect','/api/epic/disconnect','/api/epic/run','/api/epic/refresh'].includes(path)) return json({error:'not_found'},404);
   const interactive = ['/api/epic/connect','/api/epic/disconnect'].includes(path);
   // Credential changes require a real Sites-authenticated owner, never merely
@@ -51,7 +51,7 @@ async function epicRoute(request,env,path) {
     ])
   };
   try {
-    const service=new EpicService(repository,env.EPIC_CREDENTIAL_KEY,new EpicAPI(env.EPIC_CLIENT_SECRET));
+    const service=new EpicService(repository,env.EPIC_CREDENTIAL_KEY,new EpicAPI(env.EPIC_CLIENT_SECRET),configuredTargets(env));
     if(path==='/api/epic/connect') return json(await service.connect(body.code));
     if(path==='/api/epic/disconnect') return json(await service.disconnect());
     if(path==='/api/epic/refresh') return json(await service.refresh());
@@ -112,7 +112,7 @@ export default {
       if(path==='/api/update' && request.method==='POST') return await update(request,env);
       if(path==='/api/session-recovery/test' && request.method==='POST') return await update(request,env,true);
       if(path==='/api/status' && request.method==='GET') return json(await read(env,'snapshot') || {project_acceptance_complete:false,results:[]});
-      if(path==='/' && request.method==='GET') return new Response(page(await read(env,'snapshot'),await read(env,'epic_snapshot') || summary(null)),{headers:{...headers,'Content-Type':'text/html; charset=utf-8','Content-Security-Policy':"default-src 'none'; script-src 'self'; connect-src 'self'; form-action 'self'; base-uri 'none'; style-src 'unsafe-inline'; img-src data:; frame-ancestors 'self' https://chatgpt.com"}});
+      if(path==='/' && request.method==='GET') return new Response(page(await read(env,'snapshot'),await read(env,'epic_snapshot') || summary(null,configuredTargets(env))),{headers:{...headers,'Content-Type':'text/html; charset=utf-8','Content-Security-Policy':"default-src 'none'; script-src 'self'; connect-src 'self'; form-action 'self'; base-uri 'none'; style-src 'unsafe-inline'; img-src data:; frame-ancestors 'self' https://chatgpt.com"}});
       return json({error:'not_found'},404);
     } catch { return json({error:'temporarily_unavailable'},503); }
   }

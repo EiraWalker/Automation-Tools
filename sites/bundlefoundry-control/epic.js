@@ -184,35 +184,57 @@ export class EpicAPI {
   async confirm(session, game, checkout) {
     assertFreeOrder(checkout.preview,game,session.account_id);
     const p = checkout.preview;
-    await this.request(PAYMENT+'/confirm-order',{method:'POST',
+    const result=await this.request(PAYMENT+'/confirm-order',{method:'POST',
       headers:{...this.auth(session),'Content-Type':'application/json','x-requested-with':checkout.purchaseToken},
       body:JSON.stringify({useDefault:true,setDefault:false,namespace:game.namespace,country:game.country,
         countryName:p.countryName,orderId:null,orderComplete:null,orderError:null,orderPending:null,
         offers:p.offers,includeAccountBalance:false,totalAmount:0,affiliateId:'',creatorSource:'',syncToken:p.syncToken})
     });
+    if(result.confirmation!==true && !validId(result.confirmation?.orderId)) throw new EpicError('order_review_required');
+    return {confirmed:true,order_id:validId(result.confirmation?.orderId)?result.confirmation.orderId:null};
   }
 }
 
-export function summary(state) {
-  if (!state) return {connected:false,status:'not_connected',games:[],results:[],project_acceptance_complete:false};
+export function configuredTargets(env) {
+  let targets;
+  try { targets=JSON.parse(env.EPIC_ACCEPTANCE_TARGETS || '[]'); } catch { throw new EpicError('configuration_required'); }
+  if(!Array.isArray(targets) || targets.length>20 || !targets.every(g=>validId(g.id) && validId(g.namespace) &&
+    typeof g.title==='string' && g.title.length<=300 && Array.isArray(g.items) && g.items.length &&
+    g.items.every(validId) && timestamp(g.ends_at))) throw new EpicError('configuration_required');
+  if(new Set(targets.map(g=>g.namespace+':'+g.id)).size!==targets.length) throw new EpicError('configuration_required');
+  return targets;
+}
+
+export function summary(state,targets=[]) {
+  const goal=targets.map(g=>{
+    const result=state?.results?.[g.namespace+':'+g.id];
+    const complete=result?.status==='claimed' && result.free_order_verified===true && result.confirmation_received===true;
+    return {id:g.id,namespace:g.namespace,title:g.title,ends_at:g.ends_at,
+      status:complete?'claimed':result?.status || 'pending',verified_at:result?.verified_at || null};
+  });
+  const completed=goal.filter(g=>g.status==='claimed').length;
+  const acceptance_progress={completed_count:completed,required_count:goal.length,targets:goal};
+  const project_acceptance_complete=goal.length>0 && completed===goal.length;
+  if (!state) return {connected:false,status:'not_connected',games:[],results:[],project_acceptance_complete,acceptance_progress};
   return {connected:true,status:state.status || 'ready',
     account:{display_name:state.account.display_name,country:state.account.country},
     last_success_at:state.last_success_at || null, refreshed_at:state.refreshed_at || null,
     refresh_expires_at:state.session.refresh_expires_at,
     refresh_interval_warning:Date.parse(state.session.refresh_expires_at)-Date.now()<13*3600000,
     games:state.games || [], results:Object.values(state.results || {}).slice(-100),
-    project_acceptance_complete:Boolean(state.acceptance),acceptance:state.acceptance || null};
+    project_acceptance_complete,acceptance_progress,acceptance:state.acceptance || null};
 }
 
 // Repository.save atomically persists the encrypted state and safe UI snapshot.
 // Caller must hold the shared D1 lease for connect, run, and disconnect.
 export class EpicService {
-  constructor(repository, key, api) { this.repository=repository; this.key=key; this.api=api; }
+  constructor(repository, key, api, targets=[]) { this.repository=repository; this.key=key; this.api=api;this.targets=targets; }
+  view(state) { return summary(state,this.targets); }
   async load() {
     const encrypted = await this.repository.read();
     return encrypted ? unseal(encrypted,this.key) : null;
   }
-  async save(state) { await this.repository.save(state ? await seal(state,this.key) : null,summary(state)); }
+  async save(state) { await this.repository.save(state ? await seal(state,this.key) : null,this.view(state)); }
   async connect(code) {
     if (typeof code !== 'string' || !/^[A-Za-z0-9_-]{16,256}$/.test(code)) throw new EpicError('invalid_code');
     const previous = await this.load();
@@ -221,9 +243,9 @@ export class EpicService {
     const state = previous?.account.id === account.id ? previous : {results:{},pending:{}};
     Object.assign(state,{account,session,status:'ready',refreshed_at:new Date().toISOString()});
     await this.save(state);
-    return summary(state);
+    return this.view(state);
   }
-  async disconnect() { await this.save(null); return summary(null); }
+  async disconnect() { await this.save(null); return this.view(null); }
   async renew(state) {
     if (Date.parse(state.session.refresh_expires_at) <= Date.now()) throw new EpicError('login_required');
     const session=await this.api.token('refresh_token',state.session.refresh_token);
@@ -234,25 +256,29 @@ export class EpicService {
   }
   async refresh() {
     const state=await this.load();
-    if(!state) return summary(null);
+    if(!state) return this.view(null);
     try { await this.renew(state); }
     catch(error) { state.status=error instanceof EpicError?error.code:'epic_unavailable';await this.save(state); }
-    return summary(state);
+    return this.view(state);
   }
-  recordOwned(state, game, attempted) {
+  recordOwned(state, game, attempt) {
     const key = `${game.namespace}:${game.id}`;
     const at = new Date().toISOString();
+    const automatic=attempt?.free_order_verified===true && attempt.confirmation?.confirmed===true;
     const receipt = {title:game.title,id:game.id,namespace:game.namespace,items:game.items,
-      status:attempted?'claimed':'already_owned',verified_at:at,proof:'active_account_entitlements'};
+      status:automatic?'claimed':attempt?'ownership_verified_unconfirmed':'already_owned',verified_at:at,
+      proof:'active_account_entitlements',free_order_verified:attempt?.free_order_verified===true,
+      confirmation_received:automatic,order_id:attempt?.confirmation?.order_id || null,
+      requested_at:attempt?.submitted_at || null,confirmed_at:attempt?.confirmation?.at || null};
     // Keep the original newly-claimed receipt on subsequent ownership checks.
-    if (state.results[key]?.status !== 'claimed') state.results[key] = receipt;
-    if (attempted && !state.acceptance) state.acceptance = {...receipt,amount:0,country:state.account.country};
+    if (!['claimed','ownership_verified_unconfirmed'].includes(state.results[key]?.status)) state.results[key] = receipt;
+    if (automatic && !state.acceptance) state.acceptance = {...receipt,amount:0,country:state.account.country};
     delete state.pending[key];
   }
   async run() {
     let state = await this.load();
     if (!state) {
-      const view = {...summary(null),games:await this.api.catalog('TW'),checked_at:new Date().toISOString()};
+      const view = {...this.view(null),games:await this.api.catalog('TW'),checked_at:new Date().toISOString()};
       await this.repository.save(null,view); return view;
     }
     try {
@@ -264,15 +290,15 @@ export class EpicService {
       let owned = await this.api.entitlements(session);
       // Resolve interrupted submissions first, including games no longer on sale.
       for (const pending of Object.values(state.pending)) {
-        if (owns(pending.game,owned,state.account.id)) this.recordOwned(state,pending.game,true);
+        if (owns(pending.game,owned,state.account.id)) this.recordOwned(state,pending.game,pending);
       }
-      if(Object.keys(state.pending).length) state.status='order_review_required';
+      if(Object.keys(state.pending).length || Object.values(state.results).some(r=>r.status==='ownership_verified_unconfirmed')) state.status='order_review_required';
       else if(['epic_unavailable','rate_limited','ownership_unavailable','order_review_required'].includes(state.status)) state.status='ready';
       await this.save(state);
       for (const game of state.games) {
         const key = `${game.namespace}:${game.id}`;
         if (owns(game,owned,state.account.id)) {
-          this.recordOwned(state,game,Boolean(state.pending[key]));
+          this.recordOwned(state,game,state.pending[key]);
           continue;
         }
         if (state.pending[key]) { state.status='order_review_required'; continue; }
@@ -281,25 +307,28 @@ export class EpicService {
         if (state.status !== 'ready' && state.status !== 'epic_unavailable' && state.status !== 'rate_limited') continue;
         const checkout = await this.api.preview(session,game);
         assertFreeOrder(checkout.preview,game,state.account.id);
-        state.pending[key] = {game,submitted_at:new Date().toISOString()};
+        state.pending[key] = {game,submitted_at:new Date().toISOString(),free_order_verified:true};
         await this.save(state); // Durable journal BEFORE the mutating request.
-        await this.api.confirm(session,game,checkout);
+        const confirmation=await this.api.confirm(session,game,checkout);
+        if(confirmation?.confirmed!==true) throw new EpicError('order_review_required');
+        state.pending[key].confirmation={...confirmation,at:new Date().toISOString()};
+        await this.save(state);
         owned = await this.api.entitlements(session);
         if (!owns(game,owned,state.account.id)) {
           state.status='order_review_required';
           await this.save(state); continue;
         }
-        this.recordOwned(state,game,true);
+        this.recordOwned(state,game,state.pending[key]);
         await this.save(state);
       }
       if (Object.keys(state.pending).length) state.status='order_review_required';
       state.last_success_at = new Date().toISOString();
       await this.save(state);
-      return summary(state);
+      return this.view(state);
     } catch (error) {
       state.status = error instanceof EpicError ? error.code : 'epic_unavailable';
       await this.save(state);
-      return summary(state);
+      return this.view(state);
     }
   }
 }

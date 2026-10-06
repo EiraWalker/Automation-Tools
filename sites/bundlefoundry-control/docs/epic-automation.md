@@ -33,6 +33,8 @@ Epic 密码、两步验证码不提交给本站。一次性代码只在请求期
 浏览器不接收访问令牌、刷新令牌或解密密钥；页面不使用 localStorage 保存凭据。
 密文采用 AES-256-GCM、每次随机 96 位 IV 和固定的服务/版本附加认证数据。
 Epic 密钥不复用 BundleFoundry 的 Fernet 密钥，不进入公开 GitHub 或 hosting manifest。
+运行时非秘密配置 `EPIC_ACCEPTANCE_TARGETS` 固定本次验收的游戏 offer、namespace、catalog item 和限免结束时间，
+防止下周的其他游戏被误计入本周验收；该配置不含账户或凭据。
 密钥与数据库虽分开配置，Sites 运行时具有解密能力；本方案不是对运行时运营方不可解密的端到端加密。
 
 ## 部署及授权
@@ -87,7 +89,14 @@ Worker 请求会失败。现通过 `fetcher.call(globalThis, ...)` 调用，并�
 
 ## 验收
 
-必须在真实部署上完整完成：发现该账号尚未拥有的本周限免游戏 → 匹配的零金额订单 →
+本次终止条件是两个固定目标 **System Shock 2: 25th Anniversary Remaster** 与 **BURIED STARS**
+都由系统自动新领取，并确认进入同一 Epic 账号的游戏库；这两款的本期限免于台北时间 2026-10-08 23:00 结束。
+验收在授权后立即执行，不等待周五的例行任务。
+对每个目标必须完成：发现该账号尚未拥有 → 匹配的零金额订单预览 → Epic 确认订单响应 →
 该账号目标游戏 ACTIVE 权益 → D1 保存并能回读验收记录 → 重启后不重复提交。
+`acceptance_progress.completed_count` 只统计同时保存免费检查、订单确认和权益证据的固定目标。
+只领取一款时是 1/2，`project_acceptance_complete=false`；两款均完成才为 true。
 `already_owned`、测试夹具、公开促销查询、服务上线和关联任务启用都不替代新领取验收。
 未授权时 `project_acceptance_complete=false`；遇到验证或订单结构变化时如实报告，不能宣称领取完成。
+如果确认订单的响应丢失，后续即使发现已拥有，也只记为 `ownership_verified_unconfirmed`，
+不能仅凭之后的持有状态把人工领取或不确定提交算成自动领取验收。

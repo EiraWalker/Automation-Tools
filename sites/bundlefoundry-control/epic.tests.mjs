@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {EpicAPI,EpicService,EpicError,freeGames,assertFreeOrder,seal,unseal,owns} from './epic.js';
+import {EpicAPI,EpicService,EpicError,freeGames,assertFreeOrder,seal,unseal,owns,configuredTargets} from './epic.js';
 import worker from './worker.js';
 import {page,clientScript} from './ui.js';
 import {DatabaseSync} from 'node:sqlite';
@@ -21,8 +21,8 @@ function fixture() {
   let owned=[]; let confirms=0; let previews=0;
   const api={token:async()=>({...session}),profile:async()=>({...account}),catalog:async()=>[{...game}],
     entitlements:async()=>owned,preview:async()=>{previews++; return {preview:preview(),purchaseToken:'test-purchase'};},
-    confirm:async()=>{assert.ok((await unseal(repo.encrypted,key)).pending['ns:offer']);confirms++;owned=[entitlement];}};
-  return {repo,api,service:new EpicService(repo,key,api),setOwned:x=>owned=x,confirms:()=>confirms,previews:()=>previews};
+    confirm:async()=>{assert.ok((await unseal(repo.encrypted,key)).pending['ns:offer']);confirms++;owned=[entitlement];return {confirmed:true,order_id:'test-order'};}};
+  return {repo,api,service:new EpicService(repo,key,api,[game]),setOwned:x=>owned=x,confirms:()=>confirms,previews:()=>previews};
 }
 
 test('AES-GCM uses distinct IVs, rejects tampering and wrong keys',async()=>{
@@ -104,17 +104,63 @@ test('interrupted confirmation survives restart and is never blindly resubmitted
   const f=fixture();await f.service.connect('a'.repeat(32));let attempts=0;
   f.api.confirm=async()=>{attempts++;throw new EpicError('epic_unavailable');};
   await f.service.run();assert.equal(attempts,1);
-  const restarted=new EpicService(f.repo,key,f.api);
+  const restarted=new EpicService(f.repo,key,f.api,[game]);
   const pending=await restarted.run();assert.equal(attempts,1);
   assert.equal(pending.status,'order_review_required');assert.equal(pending.project_acceptance_complete,false);
   f.setOwned([entitlement]);const recovered=await restarted.run();
-  assert.equal(attempts,1);assert.equal(recovered.project_acceptance_complete,true);assert.equal(recovered.status,'ready');
+  assert.equal(attempts,1);assert.equal(recovered.project_acceptance_complete,false);assert.equal(recovered.status,'order_review_required');
+  assert.equal(recovered.results[0].status,'ownership_verified_unconfirmed');
 });
 
 test('HTTP success without entitlement is not a successful claim',async()=>{
-  const f=fixture();await f.service.connect('a'.repeat(32));f.api.confirm=async()=>{};
+  const f=fixture();await f.service.connect('a'.repeat(32));f.api.confirm=async()=>({confirmed:true});
   const result=await f.service.run();assert.equal(result.project_acceptance_complete,false);
   assert.equal(result.status,'order_review_required');assert.deepEqual(result.results,[]);
+});
+
+test('two-target acceptance stays incomplete after one newly claimed game',async()=>{
+  const f=fixture();const second={...game,id:'second',title:'Second game',items:['second-item']};
+  const service=new EpicService(f.repo,key,f.api,[game,second]);
+  await service.connect('a'.repeat(32));const result=await service.run();
+  assert.equal(result.project_acceptance_complete,false);
+  assert.equal(result.acceptance_progress.completed_count,1);
+  assert.equal(result.acceptance_progress.required_count,2);
+  assert.deepEqual(result.acceptance_progress.targets.map(g=>g.status),['claimed','pending']);
+});
+
+test('both fixed targets need confirmed zero orders and matching new entitlements',async()=>{
+  const f=fixture();const second={...game,id:'second',title:'Second game',items:['second-item']};
+  const service=new EpicService(f.repo,key,f.api,[game,second]);let owned=[];let count=0;
+  f.api.catalog=async()=>[game,second];f.api.entitlements=async()=>owned;
+  f.api.preview=async(session,g)=>({preview:{...preview(),offers:[g.id]},purchaseToken:'test-purchase'});
+  f.api.confirm=async(session,g)=>{count++;owned.push({...entitlement,catalogItemId:g.items[0]});return {confirmed:true,order_id:'order-'+count};};
+  await service.connect('a'.repeat(32));const result=await service.run();
+  assert.equal(count,2);assert.equal(result.project_acceptance_complete,true);
+  assert.equal(result.acceptance_progress.completed_count,2);
+  assert.ok(f.repo.saves.some(s=>s.view.acceptance_progress.completed_count===1 && !s.view.project_acceptance_complete));
+  assert.ok(result.results.every(r=>r.free_order_verified && r.confirmation_received && r.order_id));
+});
+
+test('an owned target does not count as a newly automated claim',async()=>{
+  const f=fixture();const second={...game,id:'second',items:['second-item']};f.setOwned([entitlement]);
+  const service=new EpicService(f.repo,key,f.api,[game,second]);await service.connect('a'.repeat(32));
+  const result=await service.run();assert.equal(result.acceptance_progress.completed_count,0);
+  assert.equal(result.acceptance_progress.targets[0].status,'already_owned');assert.equal(result.project_acceptance_complete,false);
+});
+
+test('confirmed journal recovers after ownership read failure without a second order',async()=>{
+  const f=fixture();await f.service.connect('a'.repeat(32));const original=f.api.entitlements;let calls=0;
+  f.api.entitlements=async()=>{if(++calls===2)throw new EpicError('ownership_unavailable');return original();};
+  assert.equal((await f.service.run()).project_acceptance_complete,false);
+  const restarted=new EpicService(f.repo,key,f.api,[game]);const recovered=await restarted.run();
+  assert.equal(f.confirms(),1);assert.equal(recovered.project_acceptance_complete,true);
+  assert.equal(recovered.results[0].confirmation_received,true);
+});
+
+test('acceptance configuration validates and preserves fixed target identifiers',()=>{
+  assert.deepEqual(configuredTargets({EPIC_ACCEPTANCE_TARGETS:JSON.stringify([game])}),[game]);
+  assert.throws(()=>configuredTargets({EPIC_ACCEPTANCE_TARGETS:JSON.stringify([game,game])}));
+  assert.throws(()=>configuredTargets({EPIC_ACCEPTANCE_TARGETS:'bad JSON'}));
 });
 
 test('captcha pauses submissions and refresh rotation survives subsequent network failure',async()=>{
@@ -187,7 +233,7 @@ test('Worker + real SQLite: owner connect, cloud run, atomic checkpoint, readbac
     first:async()=>statement.get(...args) || null,
     run:async()=>({meta:{changes:Number(statement.run(...args).changes)}})
   };}};},async batch(statements){db.exec('BEGIN');try {for(const s of statements) await s.run();db.exec('COMMIT');}catch(e){db.exec('ROLLBACK');throw e;}}};
-  const env={OWNER_EMAIL:'owner@example.com',DB:adapter,EPIC_CREDENTIAL_KEY:key,EPIC_CLIENT_SECRET:'TEST_CLIENT_SECRET'};
+  const env={OWNER_EMAIL:'owner@example.com',DB:adapter,EPIC_CREDENTIAL_KEY:key,EPIC_CLIENT_SECRET:'TEST_CLIENT_SECRET',EPIC_ACCEPTANCE_TARGETS:JSON.stringify([game])};
   const originalFetch=globalThis.fetch;let confirmed=false;
   globalThis.fetch=async(url,options)=>{
     if(url.includes('/oauth/token')) return Response.json(session);
