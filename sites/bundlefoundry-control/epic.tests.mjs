@@ -135,10 +135,11 @@ test('ownership rejects another account, wrong namespace, revoked and expired en
 
 test('API keeps credentials on fixed Epic hosts, disables redirects and stops challenges',async()=>{
   let captured;
-  const api=new EpicAPI('TEST_CLIENT_SECRET',async(url,options)=>{captured={url,options};return Response.json(session);});
+  const api=new EpicAPI('TEST_CLIENT_SECRET',async function(url,options){captured={url,options,receiver:this};return Response.json(session);});
   await api.token('refresh_token','TEST_REFRESH');
   assert.ok(captured.url.startsWith('https://account-public-service-prod03.ol.epicgames.com/'));
   assert.equal(captured.options.redirect,'manual');assert.ok(captured.options.body.includes('grant_type=refresh_token'));
+  assert.equal(captured.receiver,globalThis);
   const redirect=new EpicAPI('TEST',async()=>new Response('',{status:302,headers:{Location:'https://evil.example'}}));
   await assert.rejects(redirect.catalog('TW'),e=>e.code==='verification_required');
   const captcha=new EpicAPI('TEST',async()=>Response.json({errorCode:'errors.com.epicgames.captcha_required'},{status:400}));
