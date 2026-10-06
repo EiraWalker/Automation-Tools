@@ -19,4 +19,6 @@ Sites OAuth 保护验证入口；Gmail API 和 BundleFoundry 的 Google 授权�
 
 此次 Chrome 已关闭，Google profile 已加密归档，明文 profile 已删除。BundleFoundry 会话使用加密 vault 保存，已验证可复用。此次 Render 临时访问令牌已撤销，`server.py` 已移除浏览器中转路由；旧 `LOGIN_*` 变量不会重新启用它。
 
-尚未创建新的 Sites 验证项目：当前登录已保存并关闭，无须重新开放浏览器。`login_environment.py`、`login_agent.py`、`login_relay.py` 保留为本地技术组件及回归测试，不能直接用于公开部署。再次需要交互时，必须先完成上述 Sites OAuth 私有入口，再连接本地浏览器。
+已创建独立 owner-private Sites 任务控制页，使用平台 OAuth；Google 浏览器没有重新开放。匿名访问和伪造用户头均被平台拒绝。机器更新通过平台支持的服务访问及独立后端密钥运行，服务访问不替代用户 Gmail 授权。部署架构见 [云端定时方案](cloud-scheduler.md)。
+
+`login_environment.py`、`login_agent.py`、`login_relay.py` 保留为本地技术组件及回归测试，不能直接用于公开部署。再次需要 Google 交互时，必须通过上述 Sites OAuth 私有入口，再连接本地浏览器。

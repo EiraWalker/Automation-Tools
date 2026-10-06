@@ -4,9 +4,11 @@
 
 ## 当前交付状态
 
-已实现领取逻辑并提供自动化测试。`server.py` 提供健康检查和后台监听，未配置授权时保持 `waiting_for_authorization` 状态；该状态表示服务在线，但领取尚未启用。首次授权仍需要 Gmail OAuth refresh token 和 BundleFoundry 登录会话。连接在 ChatGPT 中的 Gmail 授权不能导出成后台程序的凭据。
+当前部署采用 [Sites 定时任务 + Render API + D1 加密 checkpoint](../docs/cloud-scheduler.md)，复用原生 Gmail 连接；以下独立 Gmail OAuth 和 Starter 常驻说明是备用部署方案。免费购买以 My Bundles 的相同 Bundle ID、tier 0 和金额 0.00 核实，详情页许可证数组可能仍为空。
 
-## 首次授权（在你自己的电脑完成）
+`server.py` 提供受服务密钥保护的云任务接口和无私人资料的健康检查；`external_scheduler_ready` 表示外部接口已配置，实际运行与调度状态以私有 Sites 记录及关联任务为准。独立运行 `worker.py` 才需要额外 Gmail OAuth refresh token；连接在 ChatGPT 中的 Gmail 授权不能导出成后台程序的凭据，当前定时方案直接在原生任务上下文读取该连接。
+
+## 独立 Gmail OAuth 备用方案（在你自己的电脑完成）
 
 远程交互授权必须通过 **owner-private ChatGPT Sites OAuth**，配置遵循 [私有验证入口](../docs/private-verification.md)。`server.py` 不再挂载 Render 浏览器中转入口，旧 `LOGIN_*` 变量也不能重新开启它。历史临时中转脚本仅保留为本地组件，不能直接公开部署。
 
@@ -75,7 +77,7 @@ python setup_auth.py --bundle-only
 
 `python worker.py --verify-e2e` 执行一次真实业务循环，并且只有存在上述成功证据时才返回退出码 0；缺少授权返回 2，尚无成功记录返回 3。本地运行可排查登录，但不能替代目标云服务上的部署验收。`--acceptance-status` 可在服务终端读取完整验收记录；记录只保存在私有状态目录。公开 `/status` 仅返回 `project_acceptance_complete` 布尔值，不返回邮件、账号或 cookie。
 
-已拥有的资产（`already_owned`）、种子邮件、模拟测试、免费额度查询及单纯 HTTP 200 均不通过这个验收条件。验收完成仍保持每日两次检查，不因首次成功关闭长期自动化。交付还须确认目标服务使用常驻计划、持久磁盘，以及 `CONTINUOUS_POLLING_ENABLED=true`、`POLL_SECONDS=43200`。目前 BundleFoundry 登录已真实验证并加密保存，但仍缺 Gmail API refresh token、常驻计划和持久磁盘，尚无真实新领取验收记录，不能标记项目已完成。
+已拥有的资产（`already_owned`）、种子邮件、模拟测试、免费额度查询及单纯 HTTP 200 均不通过这个验收条件。验收完成仍保持每日两次检查，不因首次成功关闭长期自动化。此独立轮询方案还须确认常驻计划、持久磁盘，以及 `CONTINUOUS_POLLING_ENABLED=true`、`POLL_SECONDS=43200`。当前 Sites 定时部署使用其私有 API readback 验收，不依赖这个需要独立 OAuth 的 CLI；完整标准见 [云端定时方案](../docs/cloud-scheduler.md)。
 
 ## Render 持续运行
 
