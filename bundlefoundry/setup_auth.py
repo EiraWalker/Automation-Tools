@@ -16,7 +16,7 @@ import urllib.parse
 import urllib.request
 import webbrowser
 
-from bundlefoundry import BASE, BundleFoundry, parse_page, site_cookie
+from bundlefoundry import BASE, BundleFoundry, NeedsLogin, parse_page, site_cookie
 from gmail import Gmail, SCOPE
 from vault import Vault
 
@@ -69,7 +69,10 @@ def authorize_gmail(client_file):
         tokens = json.load(response)
     if not tokens.get("refresh_token"):
         raise ValueError("Google did not issue a refresh token; authorize offline access again")
-    return {k: client[k] for k in ("client_id", "client_secret")} | {"refresh_token": tokens["refresh_token"], "scope": SCOPE}
+    credentials = {k: client[k] for k in ("client_id", "client_secret")} | {"refresh_token": tokens["refresh_token"], "scope": SCOPE}
+    if tokens.get("refresh_token_expires_in"):
+        credentials["refresh_token_expires_at"] = time.time() + int(tokens["refresh_token_expires_in"])
+    return credentials
 
 
 def chrome_path(explicit):
@@ -92,9 +95,11 @@ def capture_bundle_session(vault, chrome):
         probe.bind(("127.0.0.1", 0))
         port = probe.getsockname()[1]
     profile = vault.directory / "google-browser"
+    profile.mkdir(parents=True, exist_ok=True, mode=0o700)
+    profile.chmod(0o700)
     process = subprocess.Popen([chrome, "--user-data-dir=" + str(profile.resolve()),
         "--remote-debugging-address=127.0.0.1", "--remote-debugging-port=" + str(port),
-        "--no-first-run", BASE + "/login"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        "--no-first-run", BASE + "/my-bundles"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     try:
         with sync_playwright() as playwright:
             browser = None
@@ -106,16 +111,27 @@ def capture_bundle_session(vault, chrome):
                     time.sleep(1)
             if not browser:
                 raise RuntimeError("Could not connect to the dedicated Chrome window")
-            print("In the new Chrome window, use 'Continue with Google' to sign in to BundleFoundry.")
-            print("Complete any two-factor authentication yourself, then open My Bundles.")
-            input("Press Enter here after the login has completed: ")
             context = browser.contexts[0]
-            response = context.request.get(BASE + "/my-bundles", timeout=30000)
-            props = parse_page(response.body())
-            user = props.get("auth", {}).get("user") or {}
             expected = vault.load()["account"]
-            if user.get("email", "").lower() != expected.lower():
-                raise ValueError("BundleFoundry login missing or account differs from authorized Gmail")
+            print("Reusing your dedicated Chrome profile. If Google asks, choose your authorized account and complete verification.")
+            print("The script detects a successful BundleFoundry login automatically; no terminal confirmation is needed.")
+            deadline = time.monotonic() + 600
+            redirected = False
+            while True:
+                response = context.request.get(BASE + "/my-bundles", timeout=30000)
+                props = parse_page(response.body())
+                user = props.get("auth", {}).get("user") or {}
+                if user.get("email"):
+                    if user["email"].lower() != expected.lower():
+                        raise ValueError("BundleFoundry account differs from authorized Gmail")
+                    break
+                if not redirected:
+                    page = context.pages[0] if context.pages else context.new_page()
+                    page.goto(BASE + "/auth/google/redirect", wait_until="domcontentloaded", timeout=60000)
+                    redirected = True
+                if time.monotonic() >= deadline:
+                    raise TimeoutError("BundleFoundry login not completed within 10 minutes")
+                time.sleep(2)
             # Google domain cookies are deliberately excluded from the cloud export.
             cookies = [dict(c, secure=True) for c in context.cookies([BASE]) if site_cookie(c)]
             if not cookies:
@@ -136,10 +152,27 @@ def main():
     parser.add_argument("--state", default="state")
     parser.add_argument("--chrome")
     parser.add_argument("--bundle-only", action="store_true", help="renew a site session while keeping Gmail OAuth")
+    parser.add_argument("--reauthorize-gmail", action="store_true", help="explicitly replace Gmail authorization")
     args = parser.parse_args()
     vault = Vault(args.state)
     saved = vault.load()
-    if not args.bundle_only:
+    if args.bundle_only and args.reauthorize_gmail:
+        parser.error("--bundle-only and --reauthorize-gmail cannot be combined")
+    gmail_valid = False
+    if saved.get("gmail", {}).get("refresh_token") and not args.reauthorize_gmail:
+        try:
+            actual = Gmail(vault).get("profile")["emailAddress"]
+            if saved.get("account") and actual.lower() != saved["account"].lower():
+                raise ValueError("Gmail account differs from saved account")
+            saved = vault.load()
+            saved["account"] = actual
+            vault.save(saved)
+            gmail_valid = True
+            print("Existing Gmail authorization is valid; no new Google consent requested.")
+        except NeedsLogin:
+            if args.bundle_only:
+                raise NeedsLogin("Gmail authorization revoked; run setup without --bundle-only") from None
+    if not gmail_valid and not args.bundle_only:
         if not args.client_secret:
             parser.error("--client-secret is required for first setup")
         saved["gmail"] = authorize_gmail(args.client_secret)
@@ -148,7 +181,11 @@ def main():
         vault.save(saved)
     if not saved.get("account"):
         parser.error("complete Gmail setup first")
-    capture_bundle_session(vault, chrome_path(args.chrome))
+    try:
+        BundleFoundry(vault).page(BASE + "/my-bundles")
+        print("Existing BundleFoundry session renewed; no browser login required.")
+    except NeedsLogin:
+        capture_bundle_session(vault, chrome_path(args.chrome))
     BundleFoundry(vault).page(BASE + "/my-bundles")
     key = os.environ.get("CREDENTIAL_KEY")
     if not key:

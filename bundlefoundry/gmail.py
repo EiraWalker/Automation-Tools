@@ -88,6 +88,14 @@ class Gmail:
             "client_id", "client_secret", "refresh_token")}, "grant_type": "refresh_token"}).encode()
         req = urllib.request.Request("https://oauth2.googleapis.com/token", body)
         result = self.fetch(req, authenticating=True)
+        # Providers can rotate refresh tokens. Keep the replacement on durable,
+        # encrypted storage instead of silently returning to the imported token.
+        if result.get("refresh_token"):
+            saved = self.vault.load()
+            saved["gmail"]["refresh_token"] = result["refresh_token"]
+            if result.get("refresh_token_expires_in"):
+                saved["gmail"]["refresh_token_expires_at"] = time.time() + int(result["refresh_token_expires_in"])
+            self.vault.save(saved)
         self.token = result["access_token"]
         self.expires = time.time() + int(result.get("expires_in", 3600))
         return self.token

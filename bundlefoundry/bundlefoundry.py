@@ -1,8 +1,10 @@
 """Site integration. Only the free checkout endpoint can be mutated."""
 import html
 import http.cookiejar
+import hashlib
 import json
 import re
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -60,6 +62,7 @@ class BundleFoundry:
         self.jar = http.cookiejar.CookieJar()
         saved = vault.load() if vault else {}
         self.account = saved.get("account", "")
+        self.claim_receipt = None
         for c in saved.get("bundle_cookies", []):
             if site_cookie(c):
                 domain = c["domain"]
@@ -132,6 +135,7 @@ class BundleFoundry:
         return props
 
     def claim(self, url):
+        self.claim_receipt = None
         props = self.page(url)
         b = props["bundle"]
         # A free owner also has tier_number=0; the license list distinguishes ownership.
@@ -155,6 +159,7 @@ class BundleFoundry:
         xsrf = next((c.value for c in self.jar if c.name == "XSRF-TOKEN" and c.domain.lstrip(".") == "bundlefoundry.com"), None)
         if not xsrf:
             raise NeedsLogin("BundleFoundry CSRF cookie missing")
+        claimed_at = time.time()
         result = self.request(BASE + "/checkout/claim-free", payload={"items": [{
             "type": "bundle", "bundle_id": b["id"], "giveaway_product_id": None,
             "tier_number": 0, "title": b["title"]}]}, headers={
@@ -173,6 +178,14 @@ class BundleFoundry:
             if self.page(url).get("owned_license_types"):
                 return "already_owned"
             raise RetryLater("free claim skipped by site")
-        if not self.page(url).get("owned_license_types"):
+        verified = self.page(url)
+        if verified.get("bundle", {}).get("id") != b["id"] or not verified.get("owned_license_types"):
             raise RetryLater("free claim not yet confirmed in account")
+        self.claim_receipt = {
+            "bundle_url": url, "bundle_id": b["id"], "bundle_title": b["title"],
+            "tier_number": 0, "owned_license_types": verified["owned_license_types"],
+            "account_sha256": hashlib.sha256(self.account.lower().encode()).hexdigest(),
+            "claimed_at": claimed_at, "ownership_verified_at": time.time(),
+            "new_claim": True,
+        }
         return "claimed"

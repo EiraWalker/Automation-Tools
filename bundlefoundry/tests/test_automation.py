@@ -2,12 +2,19 @@ import base64
 import copy
 import html
 import json
+import io
+import time
 import tempfile
+import threading
 import unittest
+import urllib.request
+from email.message import Message
+from urllib.response import addinfourl
 from unittest.mock import Mock, patch
 
 from bundlefoundry import BASE, BundleFoundry, NeedsLogin, Response, RetryLater, allowed_link, site_cookie
-from gmail import newsletter_links
+from gmail import Gmail, newsletter_links
+import setup_auth
 from vault import Vault
 from worker import Queue, run
 
@@ -80,6 +87,15 @@ class SiteTests(unittest.TestCase):
             with self.assertRaises(RetryLater):
                 self.site.claim(URL)
 
+    def test_ownership_of_different_bundle_is_not_confirmation(self):
+        other = copy.deepcopy(PROPS)
+        other["bundle"]["id"] = 99
+        other["owned_license_types"] = ["personal"]
+        with patch.object(self.site, "request", side_effect=[page_response(PROPS), Response(200, {}, b'{}'), page_response(other)]):
+            with self.assertRaises(RetryLater):
+                self.site.claim(URL)
+        self.assertIsNone(self.site.claim_receipt)
+
     def test_skipped_http_200_is_not_success(self):
         with patch.object(self.site, "request", side_effect=[page_response(PROPS), Response(200, {}, b'{"skipped":[{"name":"Example"}]}'), page_response(PROPS)]):
             with self.assertRaises(RetryLater):
@@ -122,6 +138,50 @@ class MailTests(unittest.TestCase):
 
 
 class PersistenceTests(unittest.TestCase):
+    def test_server_rotated_cookie_and_real_expiry_survive_restart(self):
+        seen = []
+
+        class Upstream(urllib.request.HTTPSHandler):
+            def https_open(self, req):
+                seen.append(req.get_header("Cookie"))
+                headers = Message()
+                headers["Set-Cookie"] = "bundlefoundry-session=rotated; Path=/; Secure; HttpOnly; Max-Age=604800"
+                response = addinfourl(io.BytesIO(b'{}'), headers, req.full_url, 200)
+                response.msg = "OK"
+                return response
+
+        with tempfile.TemporaryDirectory() as root:
+            vault = Vault(root)
+            vault.save({"account": "owner@example.com", "bundle_cookies": [COOKIE]})
+            site = BundleFoundry(vault)
+            site.opener = urllib.request.build_opener(Upstream(), urllib.request.HTTPCookieProcessor(site.jar))
+            site.request(BASE + "/my-bundles")
+            rotated = next(c for c in vault.load()["bundle_cookies"] if c["name"] == "bundlefoundry-session")
+            self.assertEqual(rotated["value"], "rotated")
+            self.assertAlmostEqual(rotated["expires"] - time.time(), 604800, delta=3)
+            resumed = BundleFoundry(Vault(root))
+            resumed.opener = urllib.request.build_opener(Upstream(), urllib.request.HTTPCookieProcessor(resumed.jar))
+            resumed.request(BASE + "/my-bundles")
+            self.assertIn("bundlefoundry-session=rotated", seen[-1])
+
+    def test_rotated_google_refresh_token_is_saved(self):
+        with tempfile.TemporaryDirectory() as root:
+            vault = Vault(root)
+            vault.save({"gmail": {"client_id": "client", "client_secret": "secret", "refresh_token": "old"}})
+            with patch.object(Gmail, "fetch", return_value={"access_token": "access", "refresh_token": "replacement", "expires_in": 3600}):
+                self.assertEqual(Gmail(vault).access_token(), "access")
+            self.assertEqual(Vault(root).load()["gmail"]["refresh_token"], "replacement")
+
+    def test_setup_reuses_valid_credentials_without_browser_or_consent(self):
+        with tempfile.TemporaryDirectory() as root:
+            vault = Vault(root)
+            vault.save({"account": "owner@example.com", "gmail": {"refresh_token": "existing"}, "bundle_cookies": [COOKIE]})
+            with patch("sys.argv", ["setup_auth.py", "--state", root]), patch("setup_auth.Gmail") as gmail, patch("setup_auth.BundleFoundry"), patch("setup_auth.authorize_gmail") as consent, patch("setup_auth.capture_bundle_session") as browser, patch("builtins.print"):
+                gmail.return_value.get.return_value = {"emailAddress": "owner@example.com"}
+                setup_auth.main()
+                consent.assert_not_called()
+                browser.assert_not_called()
+
     def test_twice_daily_mail_checks_preserve_site_keep_alive(self):
         elapsed = [0]
 
@@ -189,6 +249,56 @@ class PersistenceTests(unittest.TestCase):
             q.process(site)
             self.assertEqual(q.db.execute("SELECT done,attempts FROM messages").fetchone(), (0, 1))
             self.assertEqual(q.db.execute("SELECT COUNT(*) FROM results").fetchone()[0], 0)
+
+
+class AcceptanceTests(unittest.TestCase):
+    def test_live_email_new_claim_records_durable_correlated_evidence(self):
+        owned = copy.deepcopy(PROPS)
+        owned["owned_license_types"] = ["personal"]
+        with tempfile.TemporaryDirectory() as root:
+            vault = Vault(root)
+            vault.save({"account": "owner@example.com", "bundle_cookies": [COOKIE]})
+            with patch("worker.Gmail") as gmail, patch.object(BundleFoundry, "request", side_effect=[page_response(PROPS), Response(200, {}, b'{}'), page_response(owned), page_response(owned)]):
+                gmail.return_value.messages.return_value = [{"id": "abc123"}]
+                gmail.return_value.message.return_value = message('<a href="' + URL + '">View Bundle</a>')
+                run(vault, threading.Event(), once=True)
+            queue = Queue(root)
+            self.addCleanup(queue.db.close)
+            evidence = queue.acceptance()
+            self.assertEqual(evidence["email_id"], "abc123")
+            self.assertEqual(evidence["email_source"], "gmail_api")
+            self.assertEqual(evidence["bundle_id"], 30)
+            self.assertEqual(evidence["owned_license_types"], ["personal"])
+            self.assertEqual(evidence["tier_number"], 0)
+            self.assertGreaterEqual(evidence["ownership_verified_at"], evidence["claimed_at"])
+            self.assertNotIn("owner@example.com", json.dumps(evidence))
+
+    def test_seeded_mail_and_already_owned_do_not_pass_acceptance(self):
+        for source, owned_before in [("seed", False), ("live_gmail", True)]:
+            with self.subTest(source=source), tempfile.TemporaryDirectory() as root:
+                vault = Vault(root)
+                vault.save({"account": "owner@example.com", "bundle_cookies": [COOKIE]})
+                before = copy.deepcopy(PROPS)
+                after = copy.deepcopy(PROPS)
+                after["owned_license_types"] = ["personal"]
+                if owned_before:
+                    before = after
+                responses = [page_response(before)] if owned_before else [page_response(before), Response(200, {}, b'{}'), page_response(after)]
+                queue = Queue(root)
+                queue.add(message('<a href="' + URL + '">View Bundle</a>'), source=source)
+                with patch.object(BundleFoundry, "request", side_effect=responses):
+                    queue.process(BundleFoundry(vault))
+                self.assertIsNone(queue.acceptance())
+                queue.db.close()
+
+    def test_e2e_command_does_not_succeed_without_evidence(self):
+        from worker import main
+        with tempfile.TemporaryDirectory() as root:
+            vault = Vault(root)
+            vault.save({"account": "owner@example.com", "gmail": {"refresh_token": "existing"}, "bundle_cookies": [COOKIE]})
+            with patch("sys.argv", ["worker.py", "--state", root, "--verify-e2e"]), patch("worker.run"), patch("builtins.print"), self.assertRaises(SystemExit) as exit:
+                main()
+            self.assertEqual(exit.exception.code, 3)
 
 
 if __name__ == "__main__":

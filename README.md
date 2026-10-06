@@ -6,7 +6,7 @@
 
 ## 部署
 
-源码仓库为 `EiraWalker/Automation-Tools`，主分支 `main`，程序目录为 `bundlefoundry`。根目录 `render.yaml` 配置 Render Web 服务、健康检查及持久磁盘。18 项领取与调度测试通过。
+源码仓库为 `EiraWalker/Automation-Tools`，主分支 `main`，程序目录为 `bundlefoundry`。根目录 `render.yaml` 配置 Render Web 服务、健康检查及持久磁盘。
 
 | 字段 | 值 |
 |---|---|
@@ -20,4 +20,10 @@
 
 Render 免费状态预览会休眠，不能承担常驻轮询。工作区需要先添加付款方式，才能使用 Starter 常驻计划与持久磁盘。Google 首次授权使用 `bundlefoundry/setup_auth.py`，授权生成的秘密变量通过 Render 环境设置导入；完整步骤在工具目录的说明中。
 
-`/status` 显示 `waiting_for_authorization` 表示服务在线等待授权；显示 `ready_requires_always_on_plan` 表示授权已经导入，但常驻计划尚未启用。只有运行状态变为 `running` 并验证真实领取成功后，自动领取才算启用。凭据与用户邮件不在源码中。
+`/status` 显示 `waiting_for_authorization` 表示服务在线等待授权；显示 `ready_requires_always_on_plan` 表示授权已经导入，但常驻计划尚未启用。凭据与用户邮件不在源码中。
+
+## 项目终止条件
+
+项目交付须在目标常驻服务上真实完成一次：Gmail 筛选经过发件人验证的通知邮件 → 解析对应 Bundle → 检查免费额度 → 使用免费接口新领取 → 同一账号确认已拥有该资产包 → 持久保存邮件 ID 与 Bundle ID 对应的验收记录。`/status` 的 `project_acceptance_complete=true` 表示这段业务流程已有成功记录，交付时仍须核查常驻计划、持久磁盘与每天两次轮询均已启用。单元测试、HTTP 200、公开页面查询、种子邮件、`already_owned` 和服务上线均不能替代真实新领取。验收后，每天两次的自动化继续运行；终止的是项目实施与验收工作。
+
+Google 使用只读 OAuth refresh token 自动更新访问 token；BundleFoundry 使用域名限定的 HTTPS cookie，并定期保存网站发出的续期结果。目标是跨月复用，不伪造 cookie 到期日期。网站当前发出的会话 cookie 为 7 天，服务端撤销或强制失效仍需重新登录。完整说明见工具目录。

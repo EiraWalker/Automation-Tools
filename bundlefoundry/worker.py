@@ -22,19 +22,34 @@ class Queue:
         self.db.execute("PRAGMA journal_mode=WAL")
         self.db.execute("CREATE TABLE IF NOT EXISTS messages (id TEXT PRIMARY KEY, links TEXT, done INTEGER DEFAULT 0, attempts INTEGER DEFAULT 0, next_attempt REAL DEFAULT 0)")
         self.db.execute("CREATE TABLE IF NOT EXISTS results (url TEXT PRIMARY KEY, status TEXT, updated REAL)")
+        columns = {row[1] for row in self.db.execute("PRAGMA table_info(messages)")}
+        if "source" not in columns:
+            self.db.execute("ALTER TABLE messages ADD COLUMN source TEXT DEFAULT 'seed'")
+        self.db.execute("CREATE TABLE IF NOT EXISTS acceptance (message_id TEXT, url TEXT, evidence TEXT, verified REAL, PRIMARY KEY(message_id,url))")
         self.db.commit()
 
-    def contains(self, message_id):
-        return bool(self.db.execute("SELECT 1 FROM messages WHERE id=?", (message_id,)).fetchone())
+    def contains(self, message_id, source=None):
+        row = self.db.execute("SELECT source FROM messages WHERE id=?", (message_id,)).fetchone()
+        return bool(row and (source is None or row[0] == source))
 
-    def add(self, message):
+    def add(self, message, source="seed"):
         links = newsletter_links(message)
-        self.db.execute("INSERT OR IGNORE INTO messages(id,links,done) VALUES(?,?,?)", (message["id"], json.dumps(links), not links))
+        # Re-fetch and re-validate previously seeded mail through the live API
+        # before allowing it to count as an end-to-end acceptance run.
+        self.db.execute("""INSERT INTO messages(id,links,done,source) VALUES(?,?,?,?)
+            ON CONFLICT(id) DO UPDATE SET links=excluded.links,source=excluded.source,
+            done=CASE WHEN excluded.done=1 THEN 1 ELSE messages.done END
+            WHERE messages.source='seed' AND excluded.source='live_gmail'""",
+            (message["id"], json.dumps(links), not links, source))
         self.db.commit()
+
+    def acceptance(self):
+        row = self.db.execute("SELECT evidence FROM acceptance ORDER BY verified DESC LIMIT 1").fetchone()
+        return json.loads(row[0]) if row else None
 
     def process(self, site):
-        rows = self.db.execute("SELECT id,links,attempts FROM messages WHERE done=0 AND next_attempt<=? ORDER BY rowid LIMIT 25", (time.time(),)).fetchall()
-        for message_id, links, attempts in rows:
+        rows = self.db.execute("SELECT id,links,attempts,source FROM messages WHERE done=0 AND next_attempt<=? ORDER BY rowid LIMIT 25", (time.time(),)).fetchall()
+        for message_id, links, attempts, source in rows:
             try:
                 for link in json.loads(links):
                     url = site.resolve(link)
@@ -43,6 +58,14 @@ class Queue:
                         continue
                     status = site.claim(url)
                     self.db.execute("INSERT OR REPLACE INTO results VALUES(?,?,?)", (url, status, time.time()))
+                    receipt = getattr(site, "claim_receipt", None)
+                    if source == "live_gmail" and status == "claimed" and isinstance(receipt, dict):
+                        if receipt.get("bundle_url") == url and receipt.get("new_claim") is True and receipt.get("tier_number") == 0 and receipt.get("owned_license_types"):
+                            evidence = {**receipt, "schema_version": 1, "email_id": message_id,
+                                "email_source": "gmail_api", "sender_authentication": "dmarc_pass"}
+                            self.db.execute("INSERT OR REPLACE INTO acceptance VALUES(?,?,?,?)",
+                                (message_id, url, json.dumps(evidence), evidence["ownership_verified_at"]))
+                            LOG.info("project_acceptance_complete=true message=%s bundle_id=%s", message_id, receipt["bundle_id"])
                     self.db.commit()
                     LOG.info("bundle=%s status=%s", url.rsplit("/", 1)[-1], status)
                 self.db.execute("UPDATE messages SET done=1 WHERE id=?", (message_id,))
@@ -65,6 +88,7 @@ def run(vault, stop, once=False, report=None):
     poll_interval = max(60, int(os.getenv("POLL_SECONDS", "43200")))
     mail_at = 0
     heartbeat_at = 0
+    report(project_acceptance_complete=bool(queue.acceptance()))
     try:
         while not stop.is_set():
             try:
@@ -72,11 +96,12 @@ def run(vault, stop, once=False, report=None):
                 if now >= mail_at:
                     mail_at = now + poll_interval
                     for message in gmail.messages():
-                        if not queue.contains(message["id"]):
-                            queue.add(gmail.message(message["id"]))
+                        if not queue.contains(message["id"], source="live_gmail"):
+                            queue.add(gmail.message(message["id"]), source="live_gmail")
                     queue.process(site)
                     pending = queue.db.execute("SELECT COUNT(*) FROM messages WHERE done=0").fetchone()[0]
-                    report(automation_state="running", last_success=time.time(), pending_messages=pending)
+                    report(automation_state="running", last_success=time.time(), pending_messages=pending,
+                        project_acceptance_complete=bool(queue.acceptance()))
                 if now >= heartbeat_at:
                     heartbeat_at = now + 900
                     site.page(BASE + "/my-bundles")
@@ -99,6 +124,8 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--state", default=os.getenv("STATE_DIR", "state"))
     parser.add_argument("--once", action="store_true")
+    parser.add_argument("--verify-e2e", action="store_true", help="live Gmail-to-new-claim acceptance; exits nonzero until proven")
+    parser.add_argument("--acceptance-status", action="store_true", help="read the private durable acceptance receipt")
     parser.add_argument("--doctor", action="store_true")
     parser.add_argument("--seed-email", type=Path)
     parser.add_argument("--probe", help="read public free-tier availability; no claim")
@@ -106,6 +133,12 @@ def main():
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     vault = Vault(args.state)
     saved = vault.load()
+    if args.acceptance_status:
+        queue = Queue(vault.directory)
+        evidence = queue.acceptance()
+        queue.db.close()
+        print(json.dumps({"project_acceptance_complete": bool(evidence), "evidence": evidence}, ensure_ascii=False))
+        return
     if args.doctor:
         print(json.dumps({"gmail_configured": bool(saved.get("gmail", {}).get("refresh_token")),
                           "bundle_session_configured": bool(saved.get("bundle_cookies")),
@@ -129,7 +162,14 @@ def main():
     stop = threading.Event()
     signal.signal(signal.SIGTERM, lambda *_: stop.set())
     signal.signal(signal.SIGINT, lambda *_: stop.set())
-    run(vault, stop, once=args.once)
+    run(vault, stop, once=args.once or args.verify_e2e)
+    if args.verify_e2e:
+        queue = Queue(vault.directory)
+        evidence = queue.acceptance()
+        queue.db.close()
+        print(json.dumps({"project_acceptance_complete": bool(evidence), "evidence": evidence}, ensure_ascii=False))
+        if not evidence:
+            parser.exit(3, "Acceptance incomplete: no live-email new free claim has been confirmed in this account.\n")
 
 
 if __name__ == "__main__":

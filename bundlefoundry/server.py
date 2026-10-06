@@ -7,14 +7,14 @@ import signal
 import threading
 
 from vault import Vault
-from worker import run
+from worker import Queue, run
 
 
 class Status:
     def __init__(self):
         self.lock = threading.Lock()
         self.values = {"service_live": True, "automation_state": "waiting_for_authorization",
-            "continuous_polling_enabled": continuous_polling_enabled()}
+            "continuous_polling_enabled": continuous_polling_enabled(), "project_acceptance_complete": False}
 
     def report(self, **values):
         with self.lock:
@@ -78,6 +78,9 @@ def main():
     stop = threading.Event()
     status = Status()
     vault = Vault(os.getenv("STATE_DIR", "state"))
+    queue = Queue(vault.directory)
+    status.report(project_acceptance_complete=bool(queue.acceptance()))
+    queue.db.close()
     worker = threading.Thread(target=consume, args=(vault, stop, status), name="gmail-consumer", daemon=True)
     server = http.server.ThreadingHTTPServer(("0.0.0.0", int(os.getenv("PORT", "8000"))), handler(status))
     server.daemon_threads = True
