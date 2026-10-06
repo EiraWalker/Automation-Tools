@@ -1,0 +1,12 @@
+node_modules/
+.local/
+runtime/
+artifacts/
+*.png
+*.request.json
+*.response.json
+*.claimed.json
+*.tmp
+*.log
+config.local.json
+__pycache__/

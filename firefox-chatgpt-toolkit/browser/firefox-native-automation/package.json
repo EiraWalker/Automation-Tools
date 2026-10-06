@@ -1,0 +1,14 @@
+{
+  "name": "firefox-native-automation",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "license": "MIT",
+  "engines": { "node": ">=22.13.0" },
+  "scripts": { "test": "node --test tests/*.test.mjs" },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.29.0",
+    "@mozilla/firefox-devtools-mcp": "0.10.4"
+  },
+  "devDependencies": { "jsdom": "29.1.1" }
+}
