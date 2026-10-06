@@ -154,6 +154,13 @@ export class EpicAPI {
       expires_at:data.expires_at, refresh_expires_at:data.refresh_expires_at};
   }
   auth(session) { return {Authorization:'Bearer '+session.access_token}; }
+  checkoutAuth(session) {
+    const bearer=this.cookies.find(c=>c.name==='EPIC_BEARER_TOKEN' && c.expires>Date.now());
+    if(bearer) {
+      try {return {Authorization:'Bearer '+decodeURIComponent(bearer.value)};}catch{throw new EpicError('website_session_invalid');}
+    }
+    return this.auth(session);
+  }
   cookieHeader(url) {
     const u=new URL(url),now=Date.now();
     return this.cookies.filter(c=>c.expires>now && (u.hostname===c.domain || (c.subdomains && u.hostname.endsWith('.'+c.domain))) &&
@@ -190,7 +197,7 @@ export class EpicAPI {
       const fresh=await this.request(ACCOUNT+'/oauth/exchange',{headers:this.auth(session)});
       if(!validId(fresh.code))throw new EpicError('checkout_action_required');
       this.diagnostic={operation:'browser_sso',http_status:null};
-      this.setWebCookies(await this.browserSession(fresh.code));
+      this.setWebCookies(await this.browserSession(fresh.code,this.cookies.filter(c=>c.expires>Date.now())));
     }
   }
   setWebCookies(cookies) {
@@ -256,12 +263,12 @@ export class EpicAPI {
     try {html=await this.webPage(url.href);}
     catch(error) {
       if(this.diagnostic?.operation!=='web_checkout' || this.diagnostic?.http_status!==401)throw error;
-      this.cookies=[];await this.webSession(session);html=await this.webPage(url.href);
+      this.cookies=this.cookies.filter(c=>c.expires>Date.now() && c.name!=='EPIC_BEARER_TOKEN');await this.webSession(session);html=await this.webPage(url.href);
     }
     const input = html.match(/<input\b[^>]*\bid=["']purchaseToken["'][^>]*>/i)?.[0];
     const purchaseToken = input?.match(/\bvalue=["']([^"']+)["']/i)?.[1];
     if (!purchaseToken || !/^[A-Za-z0-9._~+\/-]{1,2048}$/.test(purchaseToken)) throw new EpicError('checkout_action_required');
-    const headers = {...this.auth(session),Cookie:this.cookieHeader(PAYMENT),'Content-Type':'application/json','x-requested-with':purchaseToken};
+    const headers = {...this.checkoutAuth(session),Cookie:this.cookieHeader(PAYMENT),'Content-Type':'application/json','x-requested-with':purchaseToken};
     const preview = await this.request(PAYMENT+'/order-preview',{method:'POST',headers,body:JSON.stringify({
       useDefault:true,setDefault:false,namespace:game.namespace,country:null,countryName:null,
       orderId:null,orderComplete:null,orderError:null,orderPending:null,offers:[game.id],offerPrice:''
@@ -273,7 +280,7 @@ export class EpicAPI {
     assertFreeOrder(checkout.preview,game,session.account_id);
     const p = checkout.preview;
     const result=await this.request(PAYMENT+'/confirm-order',{method:'POST',
-      headers:{...this.auth(session),Cookie:this.cookieHeader(PAYMENT),'Content-Type':'application/json','x-requested-with':checkout.purchaseToken},
+      headers:{...this.checkoutAuth(session),Cookie:this.cookieHeader(PAYMENT),'Content-Type':'application/json','x-requested-with':checkout.purchaseToken},
       body:JSON.stringify({useDefault:true,setDefault:false,namespace:game.namespace,country:game.country,
         countryName:p.countryName,orderId:null,orderComplete:null,orderError:null,orderPending:null,
         offers:p.offers,includeAccountBalance:false,totalAmount:0,affiliateId:'',creatorSource:'',syncToken:p.syncToken})
@@ -309,6 +316,7 @@ export function summary(state,targets=[]) {
     last_success_at:state.last_success_at || null, refreshed_at:state.refreshed_at || null,
     failure_stage:state.failure_stage || null,
     failure_detail:state.failure_detail || null,
+    website_session_saved:Boolean(state.web_cookies?.some(c=>c.expires>Date.now())),
     refresh_expires_at:state.session.refresh_expires_at,
     refresh_interval_warning:Date.parse(state.session.refresh_expires_at)-Date.now()<13*3600000,
     games:state.games || [], results:Object.values(state.results || {}).slice(-100),
@@ -331,11 +339,34 @@ export class EpicService {
     const session = await this.api.token('authorization_code',code);
     const account = await this.api.profile(session);
     const state = previous?.account.id === account.id ? previous : {results:{},pending:{}};
-    Object.assign(state,{account,session,status:'ready',failure_stage:null,refreshed_at:new Date().toISOString()});
+    Object.assign(state,{account,session,status:'ready',failure_stage:null,failure_detail:null,refreshed_at:new Date().toISOString()});
     await this.save(state);
     return this.view(state);
   }
   async disconnect() { await this.save(null); return this.view(null); }
+  async importCookies(payload) {
+    if(payload?.version!==1)throw new EpicError('website_session_invalid');
+    // Validate scope before consuming the one-time authorization code.
+    this.api.setWebCookies(payload.cookies);
+    if(!this.api.cookies.length)throw new EpicError('website_session_invalid');
+    const previous=await this.load();
+    const bearer=this.api.cookies.find(c=>c.name==='EPIC_BEARER_TOKEN' && c.expires>Date.now());
+    if(!bearer)throw new EpicError('website_session_invalid');
+    let token;try {token=decodeURIComponent(bearer.value);}catch{throw new EpicError('website_session_invalid');}
+    const verified=await this.api.request(ACCOUNT+'/oauth/verify',{headers:{Authorization:'Bearer '+token}});
+    if(!validId(verified.account_id) || previous && previous.account.id!==verified.account_id)throw new EpicError('account_mismatch');
+    let session;
+    if(previous)session=Date.parse(previous.session.expires_at)>Date.now()+60000?previous.session:await this.renew(previous);
+    else {
+      if(typeof payload.authorizationCode!=='string' || !/^[A-Za-z0-9_-]{16,256}$/.test(payload.authorizationCode))throw new EpicError('invalid_code');
+      session=await this.api.token('authorization_code',payload.authorizationCode);
+    }
+    const account=await this.api.profile(session);
+    if(verified.account_id!==account.id)throw new EpicError('account_mismatch');
+    const state=previous || {results:{},pending:{}};
+    Object.assign(state,{account,session,web_cookies:this.api.cookies,status:'ready',failure_stage:null,failure_detail:null,refreshed_at:new Date().toISOString()});
+    await this.save(state);return this.view(state);
+  }
   async renew(state) {
     if (Date.parse(state.session.refresh_expires_at) <= Date.now()) throw new EpicError('login_required');
     const session=await this.api.token('refresh_token',state.session.refresh_token);
@@ -349,7 +380,15 @@ export class EpicService {
     if(!state) return this.view(null);
     try {
       await this.renew(state);
-      if(state.failure_stage==='authorization_refresh') { state.status='ready';state.failure_stage=null;await this.save(state); }
+      if(state.failure_stage==='authorization_refresh') { state.status='ready';state.failure_stage=null;state.failure_detail=null;await this.save(state); }
+      if(state.web_cookies?.length && state.status==='ready' && this.api.webSession) {
+        const bearer=state.web_cookies.find(c=>c.name==='EPIC_BEARER_TOKEN');
+        if(!bearer || bearer.expires<Date.now()+13*3600000) {
+          this.api.setWebCookies(state.web_cookies);
+          try {await this.api.webSession(state.session);state.web_cookies=this.api.cookies;await this.save(state);}
+          catch(error) {state.status=error instanceof EpicError?error.code:'epic_unavailable';state.failure_stage='website_refresh';state.failure_detail=this.api.diagnostic || null;await this.save(state);}
+        }
+      }
     }
     catch(error) { state.status=error instanceof EpicError?error.code:'epic_unavailable';state.failure_stage='authorization_refresh';await this.save(state); }
     return this.view(state);
@@ -391,7 +430,7 @@ export class EpicService {
         if (owns(pending.game,owned,state.account.id)) this.recordOwned(state,pending.game,pending);
       }
       if(Object.keys(state.pending).length || Object.values(state.results).some(r=>r.status==='ownership_verified_unconfirmed')) state.status='order_review_required';
-      else if(['epic_unavailable','rate_limited','ownership_unavailable','order_review_required','login_required'].includes(state.status)) { state.status='ready';state.failure_stage=null; }
+      else if(['epic_unavailable','rate_limited','ownership_unavailable','order_review_required','login_required'].includes(state.status)) { state.status='ready';state.failure_stage=null;state.failure_detail=null; }
       await this.save(state);
       for (const game of state.games) {
         const key = `${game.namespace}:${game.id}`;
@@ -430,7 +469,7 @@ export class EpicService {
     } catch (error) {
       state.status = error instanceof EpicError ? error.code : 'epic_unavailable';
       state.failure_stage=stage;state.failure_detail=this.api.diagnostic || null;
-      if(this.api.cookies)state.web_cookies=this.api.cookies;
+      if(this.api.cookies?.length)state.web_cookies=this.api.cookies;
       await this.save(state);
       return this.view(state);
     }

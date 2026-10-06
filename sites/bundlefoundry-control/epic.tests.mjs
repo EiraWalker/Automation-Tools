@@ -93,6 +93,27 @@ test('daily credential maintenance rotates tokens without catalog, ownership or 
   assert.equal(result.project_acceptance_complete,false);assert.equal(f.confirms(),0);
 });
 
+test('private Cookie import reuses existing authorization, verifies owner and seals website tokens',async()=>{
+  const f=fixture();await f.service.connect('a'.repeat(32));
+  const cookieAPI=new EpicAPI('TEST');f.api.setWebCookies=c=>cookieAPI.setWebCookies(c);
+  Object.defineProperty(f.api,'cookies',{get:()=>cookieAPI.cookies});
+  f.api.token=async()=>{throw Error('valid existing authorization must be reused');};
+  f.api.request=async(url,options)=>{assert.ok(url.endsWith('/oauth/verify'));assert.equal(options.headers.Authorization,'Bearer TEST_WEB_TOKEN');return {account_id:account.id};};
+  const cookie={name:'EPIC_BEARER_TOKEN',value:'TEST_WEB_TOKEN',domain:'epicgames.com',path:'/',subdomains:true,expires:Date.now()+3600000};
+  const previous=await f.service.load();previous.pending={'old-order':{game,submitted_at:'test'}};await f.service.save(previous);
+  const view=await f.service.importCookies({version:1,cookies:[cookie],authorizationCode:'expired-unused-code'});
+  assert.equal(view.connected,true);assert.ok(!JSON.stringify(view).includes(cookie.value));
+  assert.ok(!JSON.stringify(f.repo).includes(cookie.value));
+  assert.equal((await f.service.load()).web_cookies[0].value,cookie.value);
+  assert.ok((await f.service.load()).pending['old-order']);
+  const original=JSON.stringify(f.repo.encrypted);
+  await assert.rejects(f.service.importCookies({version:1,cookies:[{...cookie,domain:'evil.example'}]}));
+  assert.equal(JSON.stringify(f.repo.encrypted),original);
+  f.api.request=async()=>({account_id:'another-account'});
+  await assert.rejects(f.service.importCookies({version:1,cookies:[cookie]}),e=>e.code==='account_mismatch');
+  assert.equal(JSON.stringify(f.repo.encrypted),original);
+});
+
 test('valid saved session recovers a prior login error and checkout failures identify their stage',async()=>{
   const f=fixture();await f.service.connect('a'.repeat(32));
   const state=await f.service.load();state.status='login_required';await f.service.save(state);
@@ -215,7 +236,7 @@ test('API keeps credentials on fixed Epic hosts, disables redirects and stops ch
 test('private credential mutations reject service-only access and cross-origin requests before DB',async()=>{
   const env={OWNER_EMAIL:'owner@example.com'};
   const owner={'oai-authenticated-user-id':'owner','oai-authenticated-user-email':'owner@example.com'};
-  for(const path of ['/api/epic/connect','/api/epic/disconnect']) {
+  for(const path of ['/api/epic/connect','/api/epic/disconnect','/api/epic/import']) {
     const r=await worker.fetch(new Request('https://private.test'+path,{method:'POST',headers:{'Content-Type':'application/json',Origin:'https://private.test'},body:'{}'}),env);
     assert.equal(r.status,403);
     const cross=await worker.fetch(new Request('https://private.test'+path,{method:'POST',headers:{...owner,'Content-Type':'application/json',Origin:'https://evil.test'},body:'{}'}),env);
@@ -267,6 +288,7 @@ test('Worker + real SQLite: owner connect, cloud run, atomic checkpoint, readbac
   const originalFetch=globalThis.fetch;let confirmed=false;
   globalThis.fetch=async(url,options)=>{
     if(url.includes('/oauth/token')) return Response.json(session);
+    if(url.includes('/oauth/verify')) return Response.json({account_id:account.id});
     if(url.includes('/oauth/exchange')) return Response.json({code:'test-exchange'});
     if(url.includes('/id/exchange?')) return new Response('',{status:302,headers:{Location:'https://store.epicgames.com/',
       'Set-Cookie':'EPIC_SESSION=test-cookie; Domain=.epicgames.com; Path=/; Secure; HttpOnly'}});
@@ -290,10 +312,15 @@ test('Worker + real SQLite: owner connect, cloud run, atomic checkpoint, readbac
     assert.equal((await call('/api/epic/connect',{code:'a'.repeat(32)},true)).status,200);
     assert.equal((await call('/api/epic/refresh',{})).status,200);
     assert.equal(confirmed,false);
+    const websiteCookie={name:'EPIC_BEARER_TOKEN',value:'TEST_WEB_COOKIE',domain:'epicgames.com',path:'/',subdomains:true,expires:Date.now()+3600000};
+    assert.equal((await call('/api/epic/import',{version:1,cookies:[websiteCookie]},true)).status,200);
+    assert.equal((await call('/epic-authorization/export.py')).status,403);
+    const exported=await worker.fetch(new Request('https://private.test/epic-authorization/export.py',{headers:{'oai-authenticated-user-id':'owner','oai-authenticated-user-email':'owner@example.com'}}),env);
+    assert.equal(exported.status,200);assert.match(await exported.text(),/127.0.0.1/);
     const run=await call('/api/epic/run',{});assert.equal(run.status,200);
     assert.equal((await run.json()).project_acceptance_complete,true);
     const stored=db.prepare('SELECT value FROM automation_state WHERE key=?').get('epic_state').value;
-    assert.ok(!stored.includes('TEST_ACCESS'));assert.ok(!stored.includes('TEST_REFRESH'));
+    assert.ok(!stored.includes('TEST_ACCESS'));assert.ok(!stored.includes('TEST_REFRESH'));assert.ok(!stored.includes('TEST_WEB_COOKIE'));
     assert.equal((await (await call('/api/epic/status')).json()).results[0].status,'claimed');
     assert.equal((await (await call('/api/status')).json()).last_success_at,'2026-01-01');
     const home=await call('/');assert.match(home.headers.get('Content-Security-Policy'),/script-src 'self'/);

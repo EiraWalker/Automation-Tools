@@ -37,10 +37,17 @@ export function page(bundle, epic) {
   ${gameRows?`<table><thead><tr><th>当前限免游戏${epic?.connected?'':'（台湾地区预览）'}</th><th>结果</th></tr></thead><tbody>${gameRows}</tbody></table>`:'<p>点击检查后显示当前限免游戏。</p>'}
   <button id="epic-auth-open" class="secondary" type="button">${epic?.connected?'重新授权 Epic':'连接 Epic 账号'}</button>
   <dialog id="epic-auth" aria-labelledby="epic-auth-title"><h2 id="epic-auth-title">${epic?.connected?'重新授权 Epic':'连接 Epic 账号'}</h2>
+  ${epic?.failure_stage==='checkout_preview' && ['browser_sso','web_sso'].includes(epic.failure_detail?.operation)?'<p class="notice">当前已保存的授权令牌可以续期，但 Epic 尚未允许云端浏览器建立结账网站会话。重复提交授权码不能解决这项网站验证；游戏仍未领取。</p>':''}
   <p>系统会复用已保存的刷新令牌自动续期。仅在 Epic 撤销授权、令牌失效或要求账号验证时，需要重新授权。</p>
   <ol><li><a href="${escape(loginUrl())}" target="_blank" rel="noopener noreferrer">打开 Epic 官方登录</a>。同一浏览器中的有效 Epic 登录 Cookie 可让官网复用登录；如官网要求验证，请在那里完成。</li><li>官方页面返回一次性 <code>authorizationCode</code>。立即将代码或包含它的 JSON 粘贴到下方并提交，不要在聊天中传递。授权码只能使用一次，可能很快过期。</li><li>本站向 Epic 兑换访问令牌和刷新令牌，将它们用 AES-256-GCM 加密保存到数据库。旧授权只在新授权成功后替换，授权码不写入数据库。</li><li>授权成功后立即检查并领取本周免费游戏，再核实游戏库权益。之后每周五台北时间 09:00 领取；每天 09:00、21:00 单独续期令牌，续期不领取游戏。</li></ol>
   <p class="notice">浏览器的 Epic Cookie 保存在 Epic 域名下，本站无法直接读取。本站会复用服务器加密保存的令牌及官方 SSO 网站会话；你浏览器的 Cookie 用于简化官网重新授权。若提示授权码无效、过期或已使用，请重新打开官方链接获取新代码。</p>
-  <form id="epic-connect"><label for="epic-code">Epic 一次性授权代码</label><input id="epic-code" type="password" autocomplete="off" maxlength="2000" required spellcheck="false"><button type="submit">重新授权并开始领取</button><button id="epic-auth-close" class="secondary" type="button">关闭</button></form><p id="epic-auth-message" role="status" aria-live="polite"></p></dialog>
+  <form id="epic-connect"><label for="epic-code">Epic 一次性授权代码</label><input id="epic-code" type="password" autocomplete="off" maxlength="2000" required spellcheck="false"><button type="submit">重新授权并开始领取</button></form>
+  <h3>复用 Epic 网站 Cookie</h3><p>与 BundleFoundry 使用相同的本地会话导入方式。已有授权有效时，导入只补充网站 Cookie，不再兑换授权码。</p>
+  <p>服务器网站 Cookie：${epic?.website_session_saved?'已加密保存；有效性以实际结账核验为准':'尚未保存有效期内的 Cookie，需要导入本地会话'}。</p>
+  <ol><li>安装 Python 3 和 Chrome，<a href="/epic-authorization/export.py">下载本地 Epic 会话脚本</a>。</li><li>运行 <code>python -m pip install playwright</code>，再运行 <code>python epic-local-auth.py</code>。在本地官方页面完成登录或验证。如已有专用 Chrome 调试会话，可用 <code>--cdp http://127.0.0.1:9222</code> 复用它。</li><li>立即上传生成的 <code>epic-session-import.json</code>。本站核对 Cookie 对应账号并加密保存，随后尝试领取；成功后删除电脑上的文件。</li></ol>
+  <p class="notice">导出的 JSON 含登录 Cookie，只上传到本私有页面，不要发送到聊天或仓库。Cookie 保留 Epic 签发的实际有效期，过期时才需要补充会话。</p>
+  <form id="epic-import"><label for="epic-file">本地 Epic 会话文件</label><input id="epic-file" type="file" accept="application/json,.json" required><button type="submit">加密保存 Cookie 并领取</button></form>
+  <button id="epic-auth-close" class="secondary" type="button">关闭</button><p id="epic-auth-message" role="status" aria-live="polite"></p></dialog>
   </section>
   <section class="card"><h2>BundleFoundry 免费资产包</h2><span class="badge">${bundle?.project_acceptance_complete?'首次领取已核实':'等待首次领取'}</span><p>每天检查两次 Gmail，自动领取通知中的免费档。</p><p>${escape(recoveryText)}</p><small>最近完成：${date(bundle?.last_success_at)}</small>${bundle?.acceptance?`<p>已确认拥有：<strong>${escape(bundle.acceptance.bundle_title)}</strong></p>`:''}${rows?`<table><thead><tr><th>资产包</th><th>结果</th></tr></thead><tbody>${rows}</tbody></table>`:''}</section>
   </main></body></html>`;
@@ -52,12 +59,12 @@ const authDialog = document.getElementById('epic-auth');
 const authMessage = document.getElementById('epic-auth-message');
 document.getElementById('epic-auth-open').addEventListener('click',()=>{ authMessage.textContent=''; authDialog.showModal(); });
 document.getElementById('epic-auth-close').addEventListener('click',()=>authDialog.close());
-authDialog.addEventListener('close',()=>{ document.getElementById('epic-code').value=''; });
+authDialog.addEventListener('close',()=>{ document.getElementById('epic-code').value='';document.getElementById('epic-file').value=''; });
 function busy(value) { document.querySelectorAll('button').forEach(b => b.disabled=value); }
 async function post(path,body={}) {
   const r=await fetch(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body),credentials:'same-origin'});
   const result=await r.json();
-  if (!r.ok) throw Error(({forbidden:'请在本站以所有者身份登录。',origin_rejected:'请重新打开本站后提交。',run_in_progress:'已有任务正在运行，请稍后刷新。',invalid_code:'授权代码格式不正确，请从 Epic 官方页面重新获取。',login_required:'授权代码已过期或无效，请重新获取。',epic_unavailable:'Epic 暂时不可用，请稍后再试。'})[result.error] || '操作暂未完成，请稍后重试。');
+  if (!r.ok) throw Error(({forbidden:'请在本站以所有者身份登录。',origin_rejected:'请重新打开本站后提交。',run_in_progress:'已有任务正在运行，请稍后刷新。',invalid_code:'授权代码格式不正确，请从 Epic 官方页面重新获取。',login_required:'授权已过期或无效，请重新获取。',website_session_invalid:'网站 Cookie 无效、缺少登录令牌或已过期，请重新导出本地会话。',account_mismatch:'Cookie 与当前 Epic 账号不一致，原会话未替换。',epic_unavailable:'Epic 暂时不可用，请稍后再试。'})[result.error] || '操作暂未完成，请稍后重试。');
   return result;
 }
 async function action(fn) { busy(true); message.textContent='正在处理，领取后会核实游戏权益…'; authMessage.textContent=message.textContent; try { await fn(); location.reload(); } catch(e) { message.textContent=e.message; authMessage.textContent=e.message; busy(false); } }
@@ -67,5 +74,8 @@ document.getElementById('epic-connect').addEventListener('submit',event=>{
   event.preventDefault(); const input=document.getElementById('epic-code'); let code=input.value.trim(); input.value='';
   try { if(code.startsWith('{')) code=JSON.parse(code).authorizationCode; } catch { authMessage.textContent='请粘贴正确的 authorizationCode 或 JSON。'; return; }
   action(async()=>{ try { await post('/api/epic/connect',{code}); } finally { code=''; } await post('/api/epic/run'); });
+});
+document.getElementById('epic-import').addEventListener('submit',event=>{
+  event.preventDefault();action(async()=>{const input=document.getElementById('epic-file'),file=input.files[0];if(!file || file.size>128000)throw Error('请选择本地脚本生成的会话文件（最大 128 KB）。');let data=JSON.parse(await file.text());try {await post('/api/epic/import',data);}finally {data=null;input.value='';}await post('/api/epic/run');});
 });
 `;

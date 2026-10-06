@@ -68,7 +68,7 @@ def application(status, vault=None):
             secret = os.getenv("AUTOMATION_SERVICE_TOKEN", "")
             if len(secret) < 32 or not hmac.compare_digest(request.headers.get("Authorization", ""), "Bearer " + secret):
                 return web.json_response({"error": "unauthorized"}, status=401)
-            if request.content_length and request.content_length > 1024:
+            if request.content_length and request.content_length > 128000:
                 return web.json_response({"error": "invalid_sso_input"}, status=400)
             if lock.locked():
                 return web.json_response({"error": "run_in_progress"}, status=409)

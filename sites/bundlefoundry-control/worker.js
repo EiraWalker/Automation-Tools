@@ -1,5 +1,6 @@
 import {EpicAPI,EpicService,EpicError,summary,configuredTargets} from './epic.js';
 import {page,clientScript} from './ui.js';
+import epicLocalExporter from './epic-local-auth.js';
 import {googleAuthorizationPage,googleAuthorizationScript,localExporter} from './google-authorization.js';
 const headers = {'Cache-Control':'private, no-store','X-Content-Type-Options':'nosniff','Referrer-Policy':'no-referrer'};
 const json = (value, status=200) => Response.json(value,{status,headers});
@@ -27,8 +28,8 @@ function isOwner(request,env) {
 
 async function epicRoute(request,env,path) {
   if(path==='/api/epic/status' && request.method==='GET') return json(await read(env,'epic_snapshot') || summary(null,configuredTargets(env)));
-  if(request.method!=='POST' || !['/api/epic/connect','/api/epic/disconnect','/api/epic/run','/api/epic/refresh'].includes(path)) return json({error:'not_found'},404);
-  const interactive = ['/api/epic/connect','/api/epic/disconnect'].includes(path);
+  if(request.method!=='POST' || !['/api/epic/connect','/api/epic/disconnect','/api/epic/import','/api/epic/run','/api/epic/refresh'].includes(path)) return json({error:'not_found'},404);
+  const interactive = ['/api/epic/connect','/api/epic/disconnect','/api/epic/import'].includes(path);
   // Credential changes require a real Sites-authenticated owner, never merely
   // an identity-less cloud service request. Dispatch supplies these headers.
   if(interactive && !isOwner(request,env)) return json({error:'forbidden'},403);
@@ -36,9 +37,10 @@ async function epicRoute(request,env,path) {
   if((interactive || isOwner(request,env)) && origin !== new URL(request.url).origin) return json({error:'origin_rejected'},403);
   if(origin && origin !== new URL(request.url).origin) return json({error:'origin_rejected'},403);
   if(request.headers.get('Content-Type')?.split(';')[0].toLowerCase() !== 'application/json') return json({error:'invalid_content_type'},415);
-  if(Number(request.headers.get('Content-Length') || 0)>4096) return json({error:'body_too_large'},413);
+  const maxBody=path==='/api/epic/import'?128000:4096;
+  if(Number(request.headers.get('Content-Length') || 0)>maxBody) return json({error:'body_too_large'},413);
   const text=await request.text();
-  if(text.length>4096) return json({error:'body_too_large'},413);
+  if(text.length>maxBody) return json({error:'body_too_large'},413);
   let body; try { body=JSON.parse(text); } catch { return json({error:'invalid_json'},400); }
   if(!body || typeof body!=='object' || Array.isArray(body)) return json({error:'invalid_json'},400);
   const lease=crypto.randomUUID(), now=Date.now();
@@ -52,10 +54,10 @@ async function epicRoute(request,env,path) {
     ])
   };
   try {
-    const browserSession=async exchangeCode=>{
+    const browserSession=async (exchangeCode,cookies=[])=>{
       const origin=new URL(env.RENDER_ORIGIN);
       if(origin.protocol!=='https:' || origin.username || origin.password || origin.pathname!=='/')throw new EpicError('configuration_required');
-      const response=await fetch(new URL('/internal/epic/web-session',origin),{method:'POST',redirect:'manual',headers:{Authorization:'Bearer '+env.AUTOMATION_SERVICE_TOKEN,'Content-Type':'application/json'},body:JSON.stringify({exchange_code:exchangeCode}),signal:AbortSignal.timeout(60000)});
+      const response=await fetch(new URL('/internal/epic/web-session',origin),{method:'POST',redirect:'manual',headers:{Authorization:'Bearer '+env.AUTOMATION_SERVICE_TOKEN,'Content-Type':'application/json'},body:JSON.stringify({exchange_code:exchangeCode,cookies}),signal:AbortSignal.timeout(60000)});
       if(response.status>=300 && response.status<400 || Number(response.headers.get('Content-Length') || 0)>128000)throw new EpicError('checkout_action_required');
       const text=await response.text();if(text.length>128000)throw new EpicError('checkout_action_required');
       let result;try {result=JSON.parse(text);}catch{throw new EpicError('checkout_action_required');}
@@ -64,6 +66,7 @@ async function epicRoute(request,env,path) {
     };
     const service=new EpicService(repository,env.EPIC_CREDENTIAL_KEY,new EpicAPI(env.EPIC_CLIENT_SECRET,fetch,browserSession),configuredTargets(env));
     if(path==='/api/epic/connect') return json(await service.connect(body.code));
+    if(path==='/api/epic/import') return json(await service.importCookies(body));
     if(path==='/api/epic/disconnect') return json(await service.disconnect());
     if(path==='/api/epic/refresh') return json(await service.refresh());
     return json(await service.run());
@@ -124,6 +127,10 @@ export default {
     const path=new URL(request.url).pathname;
     try {
       if(path.startsWith('/api/epic/')) return await epicRoute(request,env,path);
+      if(path==='/epic-authorization/export.py' && request.method==='GET') {
+        if(!isOwner(request,env))return json({error:'forbidden'},403);
+        return new Response(epicLocalExporter,{headers:{...headers,'Content-Type':'text/x-python; charset=utf-8','Content-Disposition':'attachment; filename="epic-local-auth.py"'}});
+      }
       if(path==='/google-authorization' && request.method==='GET') return new Response(googleAuthorizationPage(),{headers:{...headers,'Content-Type':'text/html; charset=utf-8','Content-Security-Policy':"default-src 'none'; script-src 'self'; connect-src 'self'; form-action 'self'; base-uri 'none'; style-src 'unsafe-inline'; frame-ancestors 'self' https://chatgpt.com"}});
       if(path==='/google-authorization/client.js' && request.method==='GET') return new Response(googleAuthorizationScript,{headers:{...headers,'Content-Type':'text/javascript; charset=utf-8'}});
       if(path==='/google-authorization/export.py' && request.method==='GET') return new Response(localExporter,{headers:{...headers,'Content-Type':'text/x-python; charset=utf-8','Content-Disposition':'attachment; filename="google-local-auth.py"'}});

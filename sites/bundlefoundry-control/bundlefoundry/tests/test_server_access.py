@@ -18,6 +18,9 @@ class PublicServiceAccessTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(denied.status, 401)
                 invalid = await client.post(path, json={'exchange_code': 'a' * 32, 'url': 'https://evil.example/'}, headers={'Authorization': 'Bearer ' + secret})
                 self.assertEqual(invalid.status, 400)
+                bad_cookie = {'name': 'TOKEN', 'value': 'TEST', 'domain': 'evil.example', 'path': '/', 'subdomains': False, 'expires': time.time() * 1000 + 3600000}
+                rejected_cookie = await client.post(path, json={'exchange_code': 'a' * 32, 'cookies': [bad_cookie]}, headers={'Authorization': 'Bearer ' + secret})
+                self.assertEqual(rejected_cookie.status, 400)
                 with patch('epic_session.website_session', return_value={'cookies': []}) as session:
                     result = await client.post(path, json={'exchange_code': 'a' * 32}, headers={'Authorization': 'Bearer ' + secret})
                     self.assertEqual(result.status, 200)

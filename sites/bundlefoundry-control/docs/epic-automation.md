@@ -15,7 +15,7 @@ Epic 的账号、续期、订单和权益 HTTP 请求由 Sites Worker 执行；
 | Sites 接入的 Cloudflare D1 | 保存 `epic_state` 加密令牌及订单恢复记录；保存不含令牌的 `epic_snapshot` 页面状态 |
 | Sites 运行时秘密变量 | `EPIC_CREDENTIAL_KEY` 保存独立的 32 字节 AES-GCM 密钥；`EPIC_CLIENT_SECRET` 保存所选原生 OAuth 客户端的配置 |
 | ChatGPT 关联任务 | 资产包每日台北时间 09:00、21:00；Epic 每周五 09:00；每日任务只为 Epic 续期凭据 |
-| Render | 处理 BundleFoundry；Epic 单次 SSO 后备浏览器只收到临时 exchange code，短暂处理 Cookie，不接收刷新令牌或 Epic 解密密钥 |
+| Render | 处理 BundleFoundry；Epic SSO 后备浏览器临时接收 exchange code 和有效网站 Cookie，不接收刷新令牌或 Epic 解密密钥 |
 
 ```mermaid
 flowchart TB
@@ -82,6 +82,30 @@ Cookie 按 Epic 签发的有效期复用，不强行延长到一个月。
 API 全部位于私有 Sites dispatch 后。`POST /api/epic/connect` 与 `/api/epic/disconnect`
 额外要求 Sites 注入的完整所有者身份、同源 Origin 和 JSON 请求，拒绝仅有平台服务权限的调用。
 不要在公开后端信任这些身份头，也不要绕过 Sites 边界暴露这个 Worker。
+
+### 复用 BundleFoundry 的 Cookie 导入与恢复方式
+
+“重新授权 Epic”窗口同时提供本地 Cookie 会话导入。所有者在自己的电脑运行
+私有入口 `/epic-authorization/export.py` 提供的 `epic-local-auth.py`，
+在专用 Chrome 的 Epic 官方页面完成验证，生成临时 `epic-session-import.json`。
+也可用 `--cdp http://127.0.0.1:9222` 复用所有者明确开启的本地专用 Chrome 调试会话；
+拒绝远程调试地址，不尝试从 Firefox 或 ChatGPT Desktop 跨域读取 Cookie。
+脚本仅导出 Epic 域 Cookie 和一次性授权码，不导出密码、验证码、历史记录或其他网站资料。
+自有临时 Chrome 退出后删除临时浏览器目录；复用的既有浏览器保持打开。
+临时 JSON 含敏感登录资料，支持 POSIX 权限的平台设为 `600`；导入成功后从电脑删除。
+
+`POST /api/epic/import` 与下载入口均要求真实 Sites 所有者身份；导入另要求同源 Origin，
+只接受有大小上限的 JSON。机器服务身份不能下载会话脚本或更换 Cookie。
+验证 Cookie 域名、到期时间及数量，以 `EPIC_BEARER_TOKEN` 调用 Epic 官方 OAuth verify 核对账号。
+有效的既有 Native 授权直接复用，不再消费文件中的一次性代码；首次连接才兑换代码。
+账号不匹配、Cookie 验证失败时拒绝导入，不替换已有 Cookie、领取记录或 pending journal。
+通过验证后将 Cookie 与令牌一起加密写入 D1，页面立即调用领取及权益核验。
+
+领取优先使用网站 Cookie 和它对应的 Web bearer。若短期 Cookie 失效，保留仍有效的
+`EPIC_SSO_RM`、`EPIC_SESSION_AP` 等记住登录 Cookie，注入 Render 的标准 Chromium
+再走官方 SSO；新的 Cookie 返回 Sites 后加密更新。每日仅续期操作也维护已导入的网站会话，
+不查询游戏促销或游戏库、不预览或提交订单。官方验证码或登录限制仍需要用户处理，
+会保存需要验证的状态，不保证 Cookie 能永久绕过平台的重新验证。
 
 任务通过 fresh `get_site` 获取实际 URL 和平台服务认证；向该 Site 的 `/api/epic/run`
 发送 JSON `{}`，随后 GET `/api/epic/status` 回读。
