@@ -58,8 +58,8 @@ test('private Google authorization page and local exporter do not include servic
   assert.ok(!code.includes('CREDENTIAL_KEY'));
 });
 
-test('all remote browser actions and frames require signed-in owner, with same-origin writes',async()=>{
-  for(const action of ['state','start','input','commit','test']) {
+test('Google form actions require signed-in owner and same-origin writes',async()=>{
+  for(const action of ['state','signin','input','commit','test']) {
     const get=action==='state';
     const request=new Request('https://private.test/api/google-browser/'+action,get?{}:{method:'POST',headers:{Origin:'https://private.test','Content-Type':'application/json'},body:'{}'});
     assert.equal((await worker.fetch(request,env)).status,403);
@@ -70,8 +70,24 @@ test('all remote browser actions and frames require signed-in owner, with same-o
   }
   const page=await worker.fetch(new Request('https://private.test/google-authorization'),env);
   assert.equal(page.status,200);
-  assert.ok((await page.text()).includes('保存并测试'));
-  const js=await worker.fetch(new Request('https://private.test/google-authorization/remote.js'),env);
+  const html=await page.text();
+  assert.ok(html.includes('type="password"'));
+  assert.ok(!html.includes('<canvas'));
+  const js=await worker.fetch(new Request('https://private.test/google-authorization/signin.js'),env);
   const source=await js.text();
   assert.ok(!source.includes('console.'));assert.ok(!source.includes('localStorage'));
+  assert.equal((await worker.fetch(new Request('https://private.test/google-authorization/remote.js'),env)).status,404);
+});
+
+test('Google form password is forwarded only to the fixed backend and never written to D1',async()=>{
+  const original=globalThis.fetch;let forwarded;
+  globalThis.fetch=async(url,options)=>{forwarded={url:String(url),body:JSON.parse(options.body)};return Response.json({id:'test-login',phase:'signing_in'});};
+  const configured={...env,RENDER_ORIGIN:'https://backend.test',AUTOMATION_SERVICE_TOKEN:'test-service-secret',DB:{prepare(){throw Error('login must not persist passwords');}}};
+  try{
+    const response=await worker.fetch(new Request('https://private.test/api/google-browser/signin',{method:'POST',headers:{...owner,Origin:'https://private.test','Content-Type':'application/json'},body:JSON.stringify({account:'owner@example.com',password:'test-private-password'})}),configured);
+    assert.equal(response.status,200);
+    assert.equal(forwarded.url,'https://backend.test/internal/google-browser/signin');
+    assert.equal(forwarded.body.password,'test-private-password');
+    assert.ok(!(await response.text()).includes('test-private-password'));
+  }finally{globalThis.fetch=original;}
 });

@@ -18,7 +18,7 @@ class GoogleBrowserBridge:
     def expire(self):
         if self.session and time.monotonic() > self.session['expires']:
             if self.session['phase'] not in ('closed', 'expired', 'committed'):
-                self.session.update(phase='expired', frame=None, artifact=None, commands=[{'operation':'cancel'}])
+                self.session.update(phase='expired', frame=None, artifact=None, challenge_number=None, commands=[{'operation':'cancel'}])
 
     def start(self):
         self.expire()
@@ -28,10 +28,23 @@ class GoogleBrowserBridge:
                         'frame':None,'artifact':None,'commands':[{'operation':'start'}]}
         return self.view()
 
+    def signin(self, account, password):
+        if not isinstance(account,str) or len(account)>254 or '@' not in account or not isinstance(password,str) or not 1<=len(password)<=1024:
+            raise BrowserBridgeError('invalid_login_input')
+        self.expire()
+        if self.session and self.session['phase'] not in ('closed','expired','committed','error'):
+            raise BrowserBridgeError('login_in_progress')
+        self.session={'id':str(uuid.uuid4()),'phase':'signing_in','mode':'credentials','expires':time.monotonic()+900,
+                      'frame':None,'artifact':None,'commands':[{'operation':'start','mode':'credentials','account':account,'password':password}]}
+        return self.view()
+
     def view(self):
         self.expire()
         return {'id':self.session['id'] if self.session else None,
                 'phase':self.session['phase'] if self.session else 'closed',
+                'mode':self.session.get('mode') if self.session else None,
+                'error':self.session.get('error') if self.session else None,
+                'challenge_number':self.session.get('challenge_number') if self.session else None,
                 'agent_online':time.monotonic()-self.last_agent_at < 15,
                 'width':1024,'height':768,
                 'notice':self.session.get('notice') if self.session else None,
@@ -44,8 +57,10 @@ class GoogleBrowserBridge:
             raise BrowserBridgeError('browser_session_missing')
         operation=value.get('operation')
         if operation=='cancel':
-            self.session.update(phase='closed',frame=None,artifact=None,commands=[{'operation':'cancel'}])
+            self.session.update(phase='closed',frame=None,artifact=None,challenge_number=None,commands=[{'operation':'cancel'}])
             return self.view()
+        if self.session.get('mode')=='credentials':
+            raise BrowserBridgeError('invalid_browser_input')
         if self.session['phase'] != 'interactive':
             raise BrowserBridgeError('browser_not_ready')
         if len(self.session['commands']) >= 64:
@@ -73,15 +88,21 @@ class GoogleBrowserBridge:
         if self.session and value.get('id') == self.session['id'] and self.session['phase'] not in ('expired','closed','committed'):
             if value.get('host') in {'accounts.google.com','bundlefoundry.com','myaccount.google.com','support.google.com'}:
                 self.session['host']=value['host']
-            if value.get('phase') in ('interactive','error','captured'):
+            if value.get('phase') in ('interactive','error','captured','signing_in','waiting_for_phone','additional_verification'):
                 # A frame arriving after Finish must not revert the saving phase.
                 if self.session['phase']!='saving' or value['phase']!='interactive':
                     self.session['phase']=value['phase']
+            if value.get('error') in {'google_session_rejected','invalid_password','additional_verification','account_mismatch','login_timed_out'}:
+                self.session['error']=value['error']
+            number=value.get('challenge_number')
+            if isinstance(number,str) and number.isdigit() and 1<=len(number)<=3:
+                self.session['challenge_number']=number
             if value.get('notice')=='login_not_completed':
                 self.session.update(phase='interactive',notice='login_not_completed')
             elif value.get('phase')=='captured':
                 self.session.pop('notice',None)
             frame=value.get('frame')
+            if self.session.get('mode')=='credentials':frame=None
             if frame is not None:
                 try:
                     decoded=base64.b64decode(frame,validate=True)
@@ -105,4 +126,4 @@ class GoogleBrowserBridge:
         return self.session['artifact']
 
     def committed(self):
-        self.session.update(phase='committed',artifact=None,frame=None,commands=[])
+        self.session.update(phase='committed',artifact=None,frame=None,challenge_number=None,commands=[])

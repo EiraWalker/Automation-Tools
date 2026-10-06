@@ -1,12 +1,30 @@
 import time
 import unittest
-from unittest.mock import patch
+from unittest.mock import patch, Mock
 
 from aiohttp.test_utils import TestClient, TestServer
 from server import Status, application
 
 
 class PublicServiceAccessTests(unittest.IsolatedAsyncioTestCase):
+    async def test_google_form_verifies_account_before_queuing_password_and_never_exposes_it_in_state(self):
+        vault=Mock();vault.load.return_value={'account':'owner@example.com'}
+        secret='test-gateway-'+('s'*40)
+        with patch.dict('os.environ',{'AUTOMATION_SERVICE_TOKEN':secret}):
+            client=TestClient(TestServer(application(Status(),vault)))
+            await client.start_server()
+            try:
+                headers={'Authorization':'Bearer '+secret}
+                result=await client.post('/internal/google-browser/signin',json={'account':'other@example.com','password':'test-password'},headers=headers)
+                self.assertEqual(result.status,400)
+                result=await client.post('/internal/google-browser/signin',json={'account':'owner@example.com','password':'test-password'},headers=headers)
+                self.assertEqual(result.status,200)
+                self.assertNotIn('test-password',await result.text())
+                state=await client.get('/internal/google-browser/state',headers=headers)
+                self.assertNotIn('test-password',await state.text())
+                self.assertIn('no-store',state.headers['Cache-Control'])
+            finally:await client.close()
+
     async def test_google_bridge_separates_gateway_and_agent_credentials_and_rejects_forged_identity(self):
         gateway, agent = 'gateway-' + 's' * 40, 'agent-' + 'a' * 40
         with patch.dict('os.environ', {'AUTOMATION_SERVICE_TOKEN':gateway,'GOOGLE_BROWSER_AGENT_TOKEN':agent}):

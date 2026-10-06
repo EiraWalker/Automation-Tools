@@ -22,6 +22,26 @@ class BrowserBridgeTests(unittest.TestCase):
         self.assertEqual(commands,[{'operation':'text','text':'private-user-input'}])
         self.assertEqual(self.bridge.agent({'id':identity})['commands'],[])
 
+    def test_form_password_is_consumed_once_never_viewed_or_returned_as_a_frame(self):
+        state=self.bridge.signin('owner@example.com','private-test-password')
+        self.assertNotIn('private-test-password',str(state))
+        first=self.bridge.agent({'id':state['id']})
+        self.assertEqual(first['commands'][0]['password'],'private-test-password')
+        self.assertEqual(self.bridge.agent({'id':state['id']})['commands'],[])
+        self.bridge.agent({'id':state['id'],'phase':'waiting_for_phone','frame':'ignored-private-frame','challenge_number':'42'})
+        view=self.bridge.view()
+        self.assertIsNone(view['frame'])
+        self.assertEqual(view['challenge_number'],'42')
+        self.assertNotIn('password',str(view))
+        self.bridge.input({'id':state['id'],'operation':'cancel'})
+        self.assertIsNone(self.bridge.view()['challenge_number'])
+        self.assertNotIn('private-test-password',str(self.bridge.session))
+
+    def test_form_cannot_be_replaced_while_active_and_does_not_accept_mouse_or_keyboard(self):
+        state=self.bridge.signin('owner@example.com','test-password')
+        with self.assertRaises(BrowserBridgeError):self.bridge.signin('owner@example.com','replacement')
+        with self.assertRaises(BrowserBridgeError):self.bridge.input({'id':state['id'],'operation':'text','text':'more'})
+
     def test_wrong_session_invalid_commands_and_large_frames_are_rejected(self):
         identity=self.active()
         for payload in [{'id':'other','operation':'finish'}, {'id':identity,'operation':'navigate','url':'https://evil.test'},

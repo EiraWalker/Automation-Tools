@@ -2,7 +2,7 @@ import {EpicAPI,EpicService,EpicError,summary,configuredTargets} from './epic.js
 import {page,clientScript} from './ui.js';
 import epicLocalExporter from './epic-local-auth.js';
 import {googleAuthorizationPage,googleAuthorizationScript,localExporter} from './google-authorization.js';
-import {googleRemotePage,googleRemoteScript} from './google-remote.js';
+import {googleSignInPage,googleSignInScript} from './google-signin.js';
 const headers = {'Cache-Control':'private, no-store','X-Content-Type-Options':'nosniff','Referrer-Policy':'no-referrer'};
 const json = (value, status=200) => Response.json(value,{status,headers});
 
@@ -132,9 +132,15 @@ async function googleBrowserRoute(request,env,path){
     const next=new Request(request.url,{method:'POST',headers:request.headers,body:JSON.stringify({source_account:env.OWNER_EMAIL,messages:[]})});
     return update(next,env,true);
   }
-  if(!((action==='state'&&request.method==='GET')||(['start','input'].includes(action)&&request.method==='POST')))return json({error:'not_found'},404);
+  if(!((action==='state'&&request.method==='GET')||(['signin','input'].includes(action)&&request.method==='POST')))return json({error:'not_found'},404);
   const text=request.method==='POST'?await request.text():null;
   if(text&&text.length>8192)return json({error:'body_too_large'},413);
+  if(request.method==='POST'){
+    if(request.headers.get('Content-Type')?.split(';')[0].toLowerCase()!=='application/json')return json({error:'invalid_content_type'},415);
+    let body;try{body=JSON.parse(text);}catch{return json({error:'invalid_json'},400);}
+    if(action==='input'&&body.operation!=='cancel')return json({error:'not_found'},404);
+    if(action==='signin'&&(typeof body.account!=='string'||body.account.toLowerCase()!==env.OWNER_EMAIL.toLowerCase()))return json({error:'account_mismatch'},400);
+  }
   const origin=new URL(env.RENDER_ORIGIN);
   if(origin.protocol!=='https:'||origin.username||origin.password||origin.pathname!=='/')throw Error('invalid backend origin');
   const upstream=await fetch(new URL('/internal/google-browser/'+action,origin),{method:request.method,redirect:'manual',headers:{Authorization:'Bearer '+env.AUTOMATION_SERVICE_TOKEN,'Content-Type':'application/json'},...(text===null?{}:{body:text}),signal:AbortSignal.timeout(30000)});
@@ -152,9 +158,9 @@ export default {
         return new Response(epicLocalExporter,{headers:{...headers,'Content-Type':'text/x-python; charset=utf-8','Content-Disposition':'attachment; filename="epic-local-auth.py"'}});
       }
       if(path.startsWith('/api/google-browser/'))return await googleBrowserRoute(request,env,path);
-      if(path==='/google-authorization' && request.method==='GET') return new Response(googleRemotePage(),{headers:{...headers,'Content-Type':'text/html; charset=utf-8','Content-Security-Policy':"default-src 'none'; script-src 'self'; connect-src 'self'; form-action 'self'; base-uri 'none'; style-src 'unsafe-inline'; img-src data:; frame-ancestors 'self' https://chatgpt.com"}});
+      if(path==='/google-authorization' && request.method==='GET') return new Response(googleSignInPage(),{headers:{...headers,'Content-Type':'text/html; charset=utf-8','Content-Security-Policy':"default-src 'none'; script-src 'self'; connect-src 'self'; form-action 'self'; base-uri 'none'; style-src 'unsafe-inline'; frame-ancestors 'self' https://chatgpt.com"}});
       if(path==='/google-authorization/local' && request.method==='GET')return new Response(googleAuthorizationPage(),{headers:{...headers,'Content-Type':'text/html; charset=utf-8','Content-Security-Policy':"default-src 'none'; script-src 'self'; connect-src 'self'; form-action 'self'; base-uri 'none'; style-src 'unsafe-inline'; frame-ancestors 'self' https://chatgpt.com"}});
-      if(path==='/google-authorization/remote.js' && request.method==='GET')return new Response(googleRemoteScript,{headers:{...headers,'Content-Type':'text/javascript; charset=utf-8'}});
+      if(path==='/google-authorization/signin.js' && request.method==='GET')return new Response(googleSignInScript,{headers:{...headers,'Content-Type':'text/javascript; charset=utf-8'}});
       if(path==='/google-authorization/client.js' && request.method==='GET') return new Response(googleAuthorizationScript,{headers:{...headers,'Content-Type':'text/javascript; charset=utf-8'}});
       if(path==='/google-authorization/export.py' && request.method==='GET') return new Response(localExporter,{headers:{...headers,'Content-Type':'text/x-python; charset=utf-8','Content-Disposition':'attachment; filename="google-local-auth.py"'}});
       if(path==='/api/google/import' && request.method==='POST') return await update(request,env,false,true);

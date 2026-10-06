@@ -77,6 +77,12 @@ def application(status, vault=None):
                 if action=='state' and request.method=='GET':result=bridge.view()
                 elif request.method!='POST':return web.json_response({'error':'not_found'},status=404)
                 elif action=='start':result=bridge.start()
+                elif action=='signin':
+                    payload=await request.json()
+                    account=payload.get('account')
+                    if not isinstance(account,str) or account.lower()!=vault.load().get('account','').lower():
+                        return web.json_response({'error':'account_mismatch'},status=400)
+                    result=bridge.signin(account,payload.get('password'))
                 elif action=='input':result=bridge.input(await request.json())
                 elif action=='agent':result=bridge.agent(await request.json())
                 elif action=='commit':
