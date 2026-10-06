@@ -1,0 +1,2 @@
+-r requirements-setup.txt
+aiohttp>=3.12,<4

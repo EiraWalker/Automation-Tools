@@ -1,13 +1,12 @@
 """Always-on Render service with a single mailbox worker and public health status."""
-import http.server
-import json
 import logging
 import os
-import signal
 import threading
 
 from vault import Vault
 from worker import Queue, run
+from aiohttp import web
+from login_relay import LoginRelay
 
 
 class Status:
@@ -27,25 +26,16 @@ class Status:
             return dict(self.values)
 
 
-def handler(status):
-    class Health(http.server.BaseHTTPRequestHandler):
-        def do_GET(self):
-            if self.path not in ("/", "/health", "/status"):
-                self.send_error(404)
-                return
-            body = json.dumps(status.snapshot()).encode()
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json; charset=utf-8")
-            self.send_header("Content-Length", str(len(body)))
-            self.send_header("Cache-Control", "no-store")
-            self.send_header("X-Content-Type-Options", "nosniff")
-            self.end_headers()
-            self.wfile.write(body)
+def application(status):
+    app = web.Application(client_max_size=16384)
 
-        def log_message(self, *_):
-            pass
+    async def health(request):
+        return web.json_response(status.snapshot(), headers={"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"})
 
-    return Health
+    for path in ("/", "/health", "/status"):
+        app.router.add_get(path, health)
+    LoginRelay().install(app)
+    return app
 
 
 def continuous_polling_enabled():
@@ -82,22 +72,12 @@ def main():
     status.report(project_acceptance_complete=bool(queue.acceptance()))
     queue.db.close()
     worker = threading.Thread(target=consume, args=(vault, stop, status), name="gmail-consumer", daemon=True)
-    server = http.server.ThreadingHTTPServer(("0.0.0.0", int(os.getenv("PORT", "8000"))), handler(status))
-    server.daemon_threads = True
-
-    def shutdown(*_):
-        stop.set()
-        threading.Thread(target=server.shutdown, daemon=True).start()
-
-    signal.signal(signal.SIGTERM, shutdown)
-    signal.signal(signal.SIGINT, shutdown)
     worker.start()
     logging.info("service listening; Google authorization is required before claims can run")
     try:
-        server.serve_forever(poll_interval=0.5)
+        web.run_app(application(status), host="0.0.0.0", port=int(os.getenv("PORT", "8000")), access_log=None, print=None)
     finally:
         stop.set()
-        server.server_close()
         worker.join(timeout=35)
 
 

@@ -8,6 +8,12 @@
 
 ## 首次授权（在你自己的电脑完成）
 
+也可使用受保护的临时云浏览器完成 BundleFoundry Google 登录。`login_environment.py` 连接一个正常的、带界面的 Chrome 和仅监听 localhost 的 VNC 服务；`login_agent.py` 主动通过 HTTPS/WebSocket 连接 Render，`login_relay.py` 中转桌面和页面请求。用户直接在真实 Google 页面输入密码与验证码，程序不记录键盘、剪贴板、浏览器画面或 HTTP 授权头。专属入口令牌与代理令牌分离，设置 24 小时有效期，Cookie 为 HttpOnly / Secure / SameSite=Strict。未配置秘密变量时，中转入口关闭。
+
+Google 登录资料在使用期间保存在专用、权限为 700 的 Chrome profile 中；登录成功后，只把 BundleFoundry 域名的 HTTPS cookie 保存到加密 vault。点击“保存并关闭浏览器”后，Chrome 资料压缩加密为 `state/google-browser.tar.enc`，并删除本次 profile 的明文目录，供后续安全复用。云浏览器登录不等于 Gmail API 授权；邮箱后台仍需要下述只读 OAuth 配置。临时浏览器依赖当前 Codex 环境存活，不承担长期监听。
+
+Render 中转秘密变量：`LOGIN_ACCESS_TOKEN`、`LOGIN_AGENT_TOKEN`、`LOGIN_SESSION_EXPIRES_AT`。它们不得提交源码。访问令牌只放在专属链接的 URL fragment 中，页面交换访问 Cookie 后立即从地址栏移除；入口密钥与 Google 凭据均不得出现在日志中。
+
 1. 在自己的 Google Cloud 项目中开启 Gmail API，配置 OAuth consent screen，并创建 **Desktop app** OAuth client，下载 JSON。权限只申请 `gmail.readonly`。若 consent screen 为 External / Testing，含 Gmail 权限的 refresh token 通常在 7 天后过期；长期运行需切换到适当的发布状态并遵循 Google 的要求。参见 [Google refresh token 过期规则](https://developers.google.com/identity/protocols/oauth2#expiration)。
 2. 安装 Python 3.12+ 和 Google Chrome，下载本目录，运行：
 
