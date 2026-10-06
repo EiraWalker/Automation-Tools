@@ -93,6 +93,17 @@ test('daily credential maintenance rotates tokens without catalog, ownership or 
   assert.equal(result.project_acceptance_complete,false);assert.equal(f.confirms(),0);
 });
 
+test('valid saved session recovers a prior login error and checkout failures identify their stage',async()=>{
+  const f=fixture();await f.service.connect('a'.repeat(32));
+  const state=await f.service.load();state.status='login_required';await f.service.save(state);
+  f.api.preview=async()=>{throw new EpicError('login_required');};
+  const failed=await f.service.run();assert.equal(failed.failure_stage,'checkout_preview');
+  assert.equal(failed.project_acceptance_complete,false);
+  f.api.preview=async()=>({preview:preview(),purchaseToken:'test-purchase'});
+  const recovered=await f.service.run();assert.equal(recovered.status,'ready');
+  assert.equal(recovered.project_acceptance_complete,true);assert.equal(recovered.failure_stage,null);
+});
+
 test('unsafe preview prevents confirmation without creating pending mutation',async()=>{
   const f=fixture();await f.service.connect('a'.repeat(32));
   f.api.preview=async()=>{const p=preview();p.orderResponse.totalPrice=99;return {preview:p};};

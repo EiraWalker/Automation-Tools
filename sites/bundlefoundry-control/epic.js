@@ -91,7 +91,7 @@ function classify(response, body) {
   const code = String(body?.errorCode || body?.error || body?.orderResponse?.error || '').toLowerCase();
   if (/captcha|challenge|fraud/.test(code)) return 'verification_required';
   if (/eula|consent|age|parental|region|country/.test(code)) return 'account_action_required';
-  if (/invalid_grant|invalid.*token|authentication_failed|token_verification_failed/.test(code) || response.status === 401) return 'login_required';
+  if (/invalid_grant|invalid.*token|authorization_code_not_found|refresh_token_not_found|authentication_failed|token_verification_failed/.test(code) || response.status === 401) return 'login_required';
   return response.status === 429 ? 'rate_limited' : 'epic_unavailable';
 }
 
@@ -222,6 +222,7 @@ export function summary(state,targets=[]) {
   return {connected:true,status:state.status || 'ready',
     account:{display_name:state.account.display_name,country:state.account.country},
     last_success_at:state.last_success_at || null, refreshed_at:state.refreshed_at || null,
+    failure_stage:state.failure_stage || null,
     refresh_expires_at:state.session.refresh_expires_at,
     refresh_interval_warning:Date.parse(state.session.refresh_expires_at)-Date.now()<13*3600000,
     games:state.games || [], results:Object.values(state.results || {}).slice(-100),
@@ -244,7 +245,7 @@ export class EpicService {
     const session = await this.api.token('authorization_code',code);
     const account = await this.api.profile(session);
     const state = previous?.account.id === account.id ? previous : {results:{},pending:{}};
-    Object.assign(state,{account,session,status:'ready',refreshed_at:new Date().toISOString()});
+    Object.assign(state,{account,session,status:'ready',failure_stage:null,refreshed_at:new Date().toISOString()});
     await this.save(state);
     return this.view(state);
   }
@@ -260,8 +261,11 @@ export class EpicService {
   async refresh() {
     const state=await this.load();
     if(!state) return this.view(null);
-    try { await this.renew(state); }
-    catch(error) { state.status=error instanceof EpicError?error.code:'epic_unavailable';await this.save(state); }
+    try {
+      await this.renew(state);
+      if(state.failure_stage==='authorization_refresh') { state.status='ready';state.failure_stage=null;await this.save(state); }
+    }
+    catch(error) { state.status=error instanceof EpicError?error.code:'epic_unavailable';state.failure_stage='authorization_refresh';await this.save(state); }
     return this.view(state);
   }
   recordOwned(state, game, attempt) {
@@ -284,19 +288,23 @@ export class EpicService {
       const view = {...this.view(null),games:await this.api.catalog('TW'),checked_at:new Date().toISOString()};
       await this.repository.save(null,view); return view;
     }
+    let stage='authorization_refresh';
     try {
       // Always rotate before the weekly claim, persisting new refresh tokens
       // before any subsequent request can fail.
       const session=await this.renew(state);
+      stage='account_profile';
       state.account = await this.api.profile(session);
+      stage='catalog';
       state.games = await this.api.catalog(state.account.country);
+      stage='ownership';
       let owned = await this.api.entitlements(session);
       // Resolve interrupted submissions first, including games no longer on sale.
       for (const pending of Object.values(state.pending)) {
         if (owns(pending.game,owned,state.account.id)) this.recordOwned(state,pending.game,pending);
       }
       if(Object.keys(state.pending).length || Object.values(state.results).some(r=>r.status==='ownership_verified_unconfirmed')) state.status='order_review_required';
-      else if(['epic_unavailable','rate_limited','ownership_unavailable','order_review_required'].includes(state.status)) state.status='ready';
+      else if(['epic_unavailable','rate_limited','ownership_unavailable','order_review_required','login_required'].includes(state.status)) { state.status='ready';state.failure_stage=null; }
       await this.save(state);
       for (const game of state.games) {
         const key = `${game.namespace}:${game.id}`;
@@ -308,14 +316,17 @@ export class EpicService {
         // Human-required errors are rechecked for ownership but never blindly
         // retried. Reconnect after official verification to resume submissions.
         if (state.status !== 'ready' && state.status !== 'epic_unavailable' && state.status !== 'rate_limited') continue;
+        stage='checkout_preview';
         const checkout = await this.api.preview(session,game);
         assertFreeOrder(checkout.preview,game,state.account.id);
         state.pending[key] = {game,submitted_at:new Date().toISOString(),free_order_verified:true};
         await this.save(state); // Durable journal BEFORE the mutating request.
+        stage='checkout_confirm';
         const confirmation=await this.api.confirm(session,game,checkout);
         if(confirmation?.confirmed!==true) throw new EpicError('order_review_required');
         state.pending[key].confirmation={...confirmation,at:new Date().toISOString()};
         await this.save(state);
+        stage='ownership';
         owned = await this.api.entitlements(session);
         if (!owns(game,owned,state.account.id)) {
           state.status='order_review_required';
@@ -330,6 +341,7 @@ export class EpicService {
       return this.view(state);
     } catch (error) {
       state.status = error instanceof EpicError ? error.code : 'epic_unavailable';
+      state.failure_stage=stage;
       await this.save(state);
       return this.view(state);
     }
