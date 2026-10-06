@@ -102,7 +102,9 @@ export class EpicAPI {
     const remaining=this.deadline-Date.now();
     if(remaining<=0) throw new EpicError('epic_unavailable');
     try {
-      response = await this.fetcher(url, {...options, redirect:'manual', signal:AbortSignal.timeout(Math.min(20000,remaining))});
+      // Worker host functions need their global receiver; invoking a saved
+      // native fetch as this.fetcher(...) can fail with Illegal invocation.
+      response = await this.fetcher.call(globalThis,url, {...options, redirect:'manual', signal:AbortSignal.timeout(Math.min(20000,remaining))});
     } catch { throw new EpicError('epic_unavailable'); }
     if (response.status >= 300 && response.status < 400) throw new EpicError('verification_required');
     if (Number(response.headers.get('Content-Length') || 0) > 3000000) throw new EpicError('epic_unavailable');
