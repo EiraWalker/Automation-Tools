@@ -1,4 +1,5 @@
 import copy
+import base64
 import io
 import json
 import os
@@ -12,7 +13,7 @@ from cryptography.fernet import Fernet
 
 from bundlefoundry import BASE, AccountMismatch, BundleFoundry, NeedsLogin, Response, RetryLater
 from external_runner import run_external
-from session_recovery import InteractiveLoginRequired, RecoveringBundleFoundry, SessionRecovery, pack_profile, unpack_profile
+from session_recovery import InteractiveLoginRequired, RecoveringBundleFoundry, SessionRecovery, encrypt_browser_session, pack_profile, unpack_profile
 from test_automation import COOKIE, PROPS, URL, page_response
 from vault import Vault
 
@@ -121,6 +122,19 @@ class RecoveryTests(unittest.TestCase):
 
 
 class ProfileArchiveTests(unittest.TestCase):
+    def test_portable_session_encrypts_google_only_cookies_and_requires_https(self):
+        cipher = Fernet(Fernet.generate_key())
+        token = encrypt_browser_session(b"profile", [
+            {"name": "SID", "value": "google-session-value", "domain": ".google.com", "secure": False},
+            {"name": "session", "value": "site-session-value", "domain": "bundlefoundry.com", "secure": True},
+        ], cipher)
+        payload = json.loads(cipher.decrypt(token.encode()))
+        self.assertEqual(payload["schema_version"], 2)
+        self.assertEqual(base64.b64decode(payload["profile"]), b"profile")
+        self.assertEqual(len(payload["google_cookies"]), 1)
+        self.assertTrue(payload["google_cookies"][0]["secure"])
+        self.assertNotIn("google-session-value", token)
+
     def test_only_session_files_are_archived_and_restored_privately(self):
         with tempfile.TemporaryDirectory() as root:
             profile = Path(root) / "profile"

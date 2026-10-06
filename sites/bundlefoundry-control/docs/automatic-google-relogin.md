@@ -18,6 +18,9 @@ Render 的 `RecoveringBundleFoundry` 在读取页面或免费结账遇到会话�
 Gmail 连接凭据仍留在平台；自动登录不使用 Gmail OAuth token。
 精简 profile 只包含 Chrome 的 Local State、Cookie 数据库和 Preferences，
 没有历史记录和缓存。它仍是敏感登录资料，不能放入 GitHub。
+独立密文中的 schema 2 还包含 Google 域的 Cookie 导入数据，
+用来应对不同 Chromium 发行版或宿主的 Cookie 数据库解密差异；
+导入时限制 Google 域并要求 HTTPS，保留真实有效期，不延长服务端授权。
 浏览器资料先使用独立密钥加密，再随整体 checkpoint 使用原密钥加密；
 Site 不持有两把解密密钥。生产平台秘密变量及其调用参数不得打印。
 
@@ -46,7 +49,7 @@ Render 设置 `AUTO_RELOGIN_ENABLED=true`、`GOOGLE_BROWSER_KEY`、
 密钥和生产资料只在平台秘密配置中导入。
 
 现有 Render build 命令安装 `requirements.txt` 中的 Playwright；服务启动后在后台
-安装其对应 Chromium，`browser_runtime_ready` 表示下载完成。
+安装其对应 Chromium Headless Shell，`browser_runtime_ready` 表示下载完成。
 可在自管宿主设置 `GOOGLE_BROWSER_EXECUTABLE` 使用预安装的 Chromium。
 运行环境需要 Chromium 系统依赖；最终是否可运行，以真实云端登录验收为准。
 Google 判断会话是否可用，资料可恢复不能保证永久免交互。
