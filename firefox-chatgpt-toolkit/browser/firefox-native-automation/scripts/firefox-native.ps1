@@ -172,7 +172,7 @@ try {
    $element = switch ($Focus) {
     'Chrome' { UniqueElement (Find-FirefoxElements $root 'AutomationId' 'urlbar-input') }
     'Console' { Get-FirefoxConsoleInput $root }
-    'Editor' { UniqueElement (@(Find-FirefoxElements $root 'Name' $EditorName | Where-Object { -not $_.Current.IsOffscreen })) }
+    'Editor' { UniqueElement (@(Find-FirefoxElements $root 'Name' $EditorName | Where-Object { -not $_.Current.IsOffscreen -and $_.Current.ControlType -eq [System.Windows.Automation.ControlType]::Edit })) }
    }
    Send-FirefoxKeys $context $element $Keys
   }

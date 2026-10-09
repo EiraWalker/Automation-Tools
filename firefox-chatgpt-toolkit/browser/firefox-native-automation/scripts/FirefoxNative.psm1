@@ -39,7 +39,14 @@ function Find-FirefoxElements($Root, [string]$Property, $Value) {
     return @($Root.FindAll([System.Windows.Automation.TreeScope]::Descendants, $condition))
 }
 function Get-FirefoxTabs($Root) {
-    return @(Find-FirefoxElements $Root 'ControlType' ([System.Windows.Automation.ControlType]::TabItem))
+    # Webpages also expose TabItem controls, including background Slack pages.
+    # Only the native browser tab strip can identify our operation target.
+    $condition = New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::AutomationIdProperty, 'TabsToolbar')
+    $toolbars = @($Root.FindAll([System.Windows.Automation.TreeScope]::Children, $condition))
+    if ($toolbars.Count -ne 1) { throw 'Native Firefox tabs toolbar is ambiguous.' }
+    $strips = @(Find-FirefoxElements $toolbars[0] 'AutomationId' 'tabbrowser-tabs')
+    if ($strips.Count -ne 1) { throw 'Native Firefox tab strip is ambiguous.' }
+    return @(Find-FirefoxElements $strips[0] 'ControlType' ([System.Windows.Automation.ControlType]::TabItem))
 }
 function Test-FirefoxTabSelected($Tab) {
     return ([System.Windows.Automation.SelectionItemPattern]$Tab.GetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern)).Current.IsSelected

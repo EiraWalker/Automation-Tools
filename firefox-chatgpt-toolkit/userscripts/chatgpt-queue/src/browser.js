@@ -19,8 +19,18 @@ function button(label, action, className = 'pill', symbol) {
   node.addEventListener('click', action);
   return node;
 }
-function route() { return location.pathname.match(/\/c\/([^/]+)/)?.[1] || null; }
-const EDITOR_SELECTOR = '#prompt-textarea[contenteditable="true"],textarea#prompt-textarea,[data-chatgpt-composer] .ProseMirror[contenteditable="true"][role="textbox"]';
+function route() {
+  const id = location.pathname.match(/^\/local\/([^/]+)/)?.[1] || location.pathname.match(/\/c\/([^/]+)/)?.[1];
+  return id && !/^local-chatgpt(?::|%3a)/i.test(id) ? id : null;
+}
+const EDITOR_SELECTOR = '#prompt-textarea[contenteditable="true"],textarea#prompt-textarea,[data-chatgpt-composer] .ProseMirror[contenteditable="true"][role="textbox"],[data-composer-markdown][contenteditable="true"][role="textbox"]';
+function surfaceKind() {
+  const editor = firstVisible(EDITOR_SELECTOR);
+  const workTurn = firstVisible('[data-talvt-turn-state]');
+  if (/^\/local\//.test(location.pathname) || (editor?.hasAttribute('data-codex-composer') && !workTurn)) return 'codex';
+  if (!editor) return null;
+  return workTurn || /^Work with /.test(editor.getAttribute('aria-label') || '') || editor.closest('[data-composer-input-variant="work-home"]') ? 'work' : 'chat';
+}
 const STOP_SELECTOR = '[data-testid="stop-button"],button[aria-label="Stop"],button[aria-label="Stop generating"],button[aria-label="停止生成"],button[aria-label="停止"]';
 
 // Percentages resolve against the thread's own container, including any space
@@ -54,13 +64,19 @@ class WideLayout {
 }
 
 class ChatGPTAdapter {
-  constructor(conversation) { this.conversation = conversation; }
+  constructor(conversation, mode = surfaceKind()) { this.conversation = conversation; this.mode = mode; }
   editor() { return firstVisible(EDITOR_SELECTOR); }
-  composer() { return this.editor()?.closest('[data-chatgpt-composer],form,[data-type="unified-composer"]') || this.editor()?.parentElement?.parentElement; }
+  composer() { return this.editor()?.closest('[data-codex-composer-root],[data-chatgpt-composer],form,[data-type="unified-composer"]') || this.editor()?.parentElement?.parentElement; }
   text() { const editor = this.editor(); return normalize(editor?.value ?? editor?.innerText ?? ''); }
   messages(role) {
     const root = this.editor()?.closest('[data-request-input-activity-root],main,[role="main"]') || document;
     const nodes = [...root.querySelectorAll(`[data-message-author-role="${role}"],[data-content-search-unit-key$=":${role}"]`)];
+    const fallback = role === 'user' ? '[data-user-message-bubble]' : '[data-local-conversation-final-assistant="true"] [data-markdown-text-style="assistant-message"]';
+    for (const node of root.querySelectorAll(fallback)) {
+      const unit = node.closest('[data-content-search-unit-key]') || node;
+      if (!nodes.includes(unit)) nodes.push(unit);
+    }
+    nodes.sort((a, b) => a === b ? 0 : a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1);
     return nodes.filter(node => visible(node) && !nodes.some(other => other !== node && node.contains(other)));
   }
   messageText(node) { return normalize((node?.querySelector('[data-user-message-bubble] [data-search-result-target],[data-user-message-bubble]') || node)?.innerText || ''); }
@@ -83,7 +99,7 @@ class ChatGPTAdapter {
   key(node, index) {
     if (!node) return null;
     return node.getAttribute('data-message-id') || node.querySelector('[data-chatgpt-selection-message-id]')?.getAttribute('data-chatgpt-selection-message-id') ||
-      node.closest('[data-turn-key]')?.getAttribute('data-turn-key') || node.getAttribute('data-content-search-unit-key') ||
+      node.closest('[data-turn-key]')?.getAttribute('data-turn-key') || node.getAttribute('data-content-search-unit-key') || node.closest('[data-content-search-unit-key]')?.getAttribute('data-content-search-unit-key') ||
       node.closest('[data-testid^="conversation-turn-"]')?.getAttribute('data-testid') || `position:${index}`;
   }
   snapshot() {
@@ -93,21 +109,27 @@ class ChatGPTAdapter {
     const assistant = assistants.filter(node => !user || Boolean(user.compareDocumentPosition(node) & Node.DOCUMENT_POSITION_FOLLOWING)).at(-1);
     const turn = assistant?.closest('[data-content-search-turn-key],[data-testid^="conversation-turn-"],article') || assistant?.parentElement;
     const stop = firstVisible(STOP_SELECTOR, composer || document);
-    const busy = Boolean(stop || firstVisible('[data-is-streaming="true"],.result-streaming'));
-    const finished = Boolean(turn?.querySelector('[data-testid="copy-turn-action-button"],[data-testid="good-response-turn-action-button"],[data-testid="bad-response-turn-action-button"]') ||
+    // Work can retain copy controls while tools run or an approval is pending.
+    // Its current turn state, rather than those controls, confirms completion.
+    const run = this.mode === 'work' ? turn?.querySelector('[data-talvt-turn-state]') : null;
+    const runState = run?.getAttribute('data-talvt-turn-state');
+    const runFailed = /^(failed|error|cancelled|canceled|interrupted)$/.test(runState || '');
+    const busy = Boolean(stop || firstVisible('[data-is-streaming="true"],.result-streaming') || (runState && runState !== 'complete' && !runFailed));
+    const finalReply = assistant?.closest('[data-local-conversation-final-assistant="true"]') || assistant?.querySelector('[data-local-conversation-final-assistant="true"]') || assistant?.parentElement?.closest('[data-local-conversation-final-assistant="true"]');
+    const finished = this.mode === 'work' ? runState === 'complete' : this.mode === 'codex' ? Boolean(finalReply && turn?.querySelector('button[aria-label="Copy"]') && turn?.querySelector('button[aria-label="Rate response"]')) : Boolean(turn?.querySelector('[data-testid="copy-turn-action-button"],[data-testid="good-response-turn-action-button"],[data-testid="bad-response-turn-action-button"]') ||
       (turn?.querySelector('.turn-action-controls button[aria-label="Copy"]') && turn?.querySelector('.turn-action-controls button[aria-label="Regenerate response"]')));
     const errorNode = [...(turn || document).querySelectorAll('[role="alert"]')].find(node => visible(node) && !node.closest('#chatgpt-queue-accent,#chatgpt-queue-settings'));
     const errorText = errorNode?.textContent || '';
-    const error = /something went wrong|network error|failed|limit|try again|出错|错误|上限|重试|失敗|限制/i.test(errorText)
+    const error = runFailed ? 'Work 任务失败或已停止，请处理后继续。' : /something went wrong|network error|failed|limit|try again|出错|错误|上限|重试|失敗|限制/i.test(errorText)
       ? '页面提示出错或达到限制，请处理后继续。' : '';
     const attachments = Boolean(composer?.querySelector('[data-testid="file-upload-preview"],[data-testid="attachment"],[data-testid*="attachment-preview"],[data-composer-attachment],[data-composer-file-preview],button[aria-label^="Remove file"],button[aria-label^="Remove attachment"],img[src^="blob:"]'));
-    const special = composer && /deep research|深入研究|深度研究|研究模式/i.test(composer.textContent || '');
+    const special = this.mode === 'chat' && composer && /deep research|深入研究|深度研究|研究模式/i.test(composer.textContent || '');
     return {
         userKey: this.key(user, users.length), userText: this.messageText(user), userCount: users.length,
       busy, complete: Boolean(assistant && finished && !busy),
-      ready: Boolean(editor && this.conversation && route() === this.conversation && !special),
+        ready: Boolean(editor && this.conversation && route() === this.conversation && surfaceKind() === this.mode && !special),
       draft: this.text(), attachments,
-      error: route() !== this.conversation ? '会话已切换，队列已暂停。' : error,
+        error: route() !== this.conversation || surfaceKind() !== this.mode ? '会话或模式已切换，队列已暂停。' : error,
       reason: !this.conversation ? '请先在 ChatGPT 发送首条消息，再运行队列。' : special ? '此版本仅自动处理普通文字聊天。' : !editor ? '等待页面输入框就绪' : !finished && !busy ? '等待确认回答完成' : '',
     };
   }
@@ -140,8 +162,12 @@ class ChatGPTAdapter {
     if (this.text() !== normalize(text)) throw new Error('输入内容核对失败，请检查原生输入框。');
   }
   async send(text, before, valid, beforeClick) {
-    if (!valid() || this.text() || this.snapshot().attachments) throw new Error('输入框被占用或队列已暂停。');
+    const initial = this.snapshot();
+    if (!valid() || !initial.ready || initial.error || this.text() || initial.attachments) throw new Error('输入框被占用、会话已切换或队列已暂停。');
     this.write(text);
+    // Codex keeps its send button enabled while React still holds the previous
+    // composer value. Let the native editor update the submit handler first.
+    await sleep(100);
     const deadline = Date.now() + 3500;
     let send;
     while (Date.now() < deadline) {
@@ -352,7 +378,7 @@ if (typeof module !== 'undefined' && module.exports && typeof process !== 'undef
 
 async function bootQueue() {
   if (document.getElementById('chatgpt-queue-accent')) return;
-  let engine, adapter, input, owner = false, release, listener, storageKey, currentRoute;
+  let engine, adapter, input, owner = false, release, listener, storageKey, currentRoute, currentMode;
   let generation = 0, attaching = false, notice = '', lastStatus = '';
   const layoutKey = 'cq-accent-layout-v1';
   const readWidth = () => Boolean(GM_getValue(layoutKey, true));
@@ -364,10 +390,11 @@ async function bootQueue() {
   });
   const tempKey = sessionStorage.getItem('cq-accent-temp') || uuid();
   sessionStorage.setItem('cq-accent-temp', tempKey);
-  const keyFor = id => `cq-accent-v1:${id || `new:${tempKey}`}`;
+  const keyFor = (id, mode = currentMode) => `cq-accent-v1:${mode && mode !== 'chat' ? `${mode}:` : ''}${id || `new:${tempKey}`}`;
+  const ownsCurrent = () => owner && route() === currentRoute && surfaceKind() === currentMode;
   function render() { panel.render(engine, owner, notice, input?.editingId); }
   function act(callback) {
-    if (!owner || !engine) return;
+    if (!ownsCurrent() || !engine) return;
     try { notice = ''; callback(); render(); }
     catch (error) { notice = error.message; render(); }
   }
@@ -381,7 +408,7 @@ async function bootQueue() {
     remove: id => act(() => engine.remove(id)), move: (id, delta) => act(() => engine.move(id, delta)),
     diagnostics: () => {
       try {
-        GM_setClipboard(JSON.stringify({ ...engine.diagnostics(), scriptVersion: '1.6.2', owner }, null, 2), 'text');
+        GM_setClipboard(JSON.stringify({ ...engine.diagnostics(), scriptVersion: '1.7.0', owner }, null, 2), 'text');
         panel.faultCard.buttons[0].textContent = '诊断已复制';
       } catch (error) {
         panel.faultCard.setMessage(`复制诊断失败（${engine.state.fault?.code || 'Q_DIAGNOSTIC_COPY_FAILED'}）。`);
@@ -397,9 +424,9 @@ async function bootQueue() {
   async function attach() {
     if (attaching) return;
     attaching = true;
-    const id = route(), token = ++generation;
-    const old = engine, wasNew = currentRoute === null;
-    currentRoute = id;
+    const id = route(), mode = surfaceKind() || 'chat', token = ++generation;
+    const old = engine, wasNew = currentRoute === null && currentMode === mode;
+    currentRoute = id; currentMode = mode;
     old?.dispose(); owner = false;
     input = null;
     release?.(); release = null;
@@ -407,7 +434,7 @@ async function bootQueue() {
     storageKey = keyFor(id);
     const migrate = wasNew && id && old?.state.items.length && !old.state.active ? structuredClone(old.state) : null;
     const targetKey = storageKey;
-    adapter = new ChatGPTAdapter(id);
+    adapter = new ChatGPTAdapter(id, mode);
     layout.update(adapter);
     engine = new QueueEngine({ saved: GM_getValue(targetKey, null), save: state => GM_setValue(targetKey, state), adapter, changed: render, onError: reportFault });
     input = new NativeQueueInput(engine, adapter);
@@ -453,7 +480,7 @@ async function bootQueue() {
   await attach();
   const interval = setInterval(() => {
     if (settings.dialog?.open) settings.syncTheme();
-    if (route() !== currentRoute) { attach().catch(error => { notice = error.message; attaching = false; render(); }); return; }
+    if (route() !== currentRoute || (surfaceKind() && surfaceKind() !== currentMode)) { attach().catch(error => { notice = error.message; attaching = false; render(); }); return; }
     panel.mount(adapter);
     layout.update(adapter);
     if (owner) engine.tick().catch(error => { notice = error.message; render(); });
@@ -461,16 +488,16 @@ async function bootQueue() {
   }, 500);
   document.addEventListener('click', event => {
     const target = event.target instanceof Element ? event.target.closest('button') : null;
-    if (owner && target?.matches(STOP_SELECTOR)) {
+    if (ownsCurrent() && target?.matches(STOP_SELECTOR)) {
       act(() => engine.pause('你已停止回答；队列同时暂停。'));
     }
-    if (owner && target && target === adapter.sendButton() && engine.state.active?.phase !== 'submitting' && (input.editingId || engine.state.items.length || adapter.snapshot().busy)) {
+    if (ownsCurrent() && target && target === adapter.sendButton() && engine.state.active?.phase !== 'submitting' && (input.editingId || engine.state.items.length || adapter.snapshot().busy)) {
       event.preventDefault(); event.stopImmediatePropagation(); panel.actions.capture();
     }
   }, true);
   document.addEventListener('keydown', event => {
-    if (event.key === 'Escape' && owner && !engine.state.paused) act(() => engine.pause('已暂停队列。'));
-      if (owner && (event.key === 'Enter' || event.key.toLowerCase() === 'q')) enqueueShortcut(event, adapter.editor(), () => panel.actions.capture(), Boolean(input.editingId || engine.state.items.length || adapter.snapshot().busy));
+    if (event.key === 'Escape' && ownsCurrent() && !engine.state.paused) act(() => engine.pause('已暂停队列。'));
+    if (ownsCurrent() && (event.key === 'Enter' || event.key.toLowerCase() === 'q')) enqueueShortcut(event, adapter.editor(), () => panel.actions.capture(), Boolean(input.editingId || engine.state.items.length || adapter.snapshot().busy));
   }, true);
   window.addEventListener('pagehide', () => {
     clearInterval(interval);

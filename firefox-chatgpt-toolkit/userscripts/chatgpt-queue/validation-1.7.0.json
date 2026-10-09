@@ -1,0 +1,73 @@
+{
+  "version": "1.7.0",
+  "date": "2026-10-09",
+  "sourceSha256": "ee99aabc50540a577ce7841b3662d9ab8f208fd2d1e2397280ed5c0fa825796c",
+  "installedSourceHashMatched": true,
+  "enabled": true,
+  "testsPassed": 62,
+  "syntaxCheckPassed": true,
+  "nativeFirefoxExistingSession": true,
+  "runtime": [
+    {
+      "mode": "work",
+      "completedReplies": 2,
+      "samples": [
+        {
+          "prompt": 1,
+          "remainingRows": 1,
+          "busy": true
+        },
+        {
+          "prompt": 2,
+          "remainingRows": 0,
+          "busy": true
+        }
+      ],
+      "remainingRows": 0,
+      "error": null,
+      "shortcutTrusted": false,
+      "shortcutPrevented": true,
+      "draftPreserved": true,
+      "draftLength": 0,
+      "hint": "Ctrl + Q  Enqueue"
+    },
+    {
+      "mode": "codex",
+      "completedReplies": 2,
+      "samples": [
+        {
+          "prompt": 1,
+          "remainingRows": 1,
+          "busy": true
+        },
+        {
+          "prompt": 2,
+          "remainingRows": 0,
+          "busy": true
+        }
+      ],
+      "remainingRows": 0,
+      "error": null,
+      "shortcutTrusted": false,
+      "shortcutPrevented": true,
+      "draftPreserved": true,
+      "draftLength": 0,
+      "hint": "Ctrl + Q  Enqueue"
+    }
+  ],
+  "consoleInputRestoredEmpty": true,
+  "consoleClosed": true,
+  "physicalShortcutRetested": false,
+  "toolApprovalLiveTested": false,
+  "initialCodexFault": "Q_ACK_TIMEOUT",
+  "fix": "Wait for native composer asynchronous state before clicking enabled Send",
+  "nativeAutomationVersion": "1.1.1",
+  "nativePolicyChecks": 8,
+  "nativePolicyPowerShell": [
+    "5.1",
+    "7"
+  ],
+  "nativeReadOnlyWindows": 1,
+  "screenshots": "Private AgentCapture WGC images inspected; capture did not activate target",
+  "privateEvidencePublished": false
+}

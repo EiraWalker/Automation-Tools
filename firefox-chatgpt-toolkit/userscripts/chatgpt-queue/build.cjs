@@ -5,7 +5,7 @@ const root = __dirname;
 const metadata = `// ==UserScript==
 // @name         ChatGPT Queue · Accent
 // @namespace    local.chatgpt-queue-accent
-// @version      1.6.2
+// @version      1.7.0
 // @description  ChatGPT 消息队列与会话全宽：逐条发送、编辑排序、暂停恢复，跟随当前 Accent color。
 // @match        https://chatgpt.com/*
 // @run-at       document-idle

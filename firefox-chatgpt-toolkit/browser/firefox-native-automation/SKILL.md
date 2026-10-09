@@ -18,3 +18,7 @@ Use [references/mcp-bridge.md](references/mcp-bridge.md) only when the task call
 For background screenshots, use the companion background-window-capture module if available; inspect the image before claiming visible UI success. Do not substitute a newly launched browser or a DOM fixture for requested real-site validation.
 
 Windows PowerShell 5.1 reads UTF-8 scripts without a BOM as the legacy code page. For local helper files containing non-ASCII tab names, save UTF-8 with BOM or invoke PowerShell 7; otherwise an exact target guard can correctly reject a misdecoded name. Never remove the guard to work around encoding.
+
+Browser tab discovery must stay scoped to the native TabsToolbar / tabbrowser-tabs; pages may expose their own TabItem controls. Editor selection requires a unique ControlType.Edit, exact name and non-Offscreen state, rather than a placeholder Text node. Some current ChatGPT pages mark their visible editor Offscreen in UIA; reject native SendKeys in that case instead of loosening guards. A guarded page task through the native Web Console can validate installed-script behavior, but synthetic key events are not physical shortcut proof.
+
+Do not assume direct browser.storage.local edits update Tampermonkey's in-memory GM storage; refresh can restore cached values. Preserve the exact own-script state and use the extension's storage UI or an explicitly scoped maintenance operation when repair is necessary. Never publish chat IDs, draft backups or one-time maintenance code in the reusable userscript.

@@ -19,6 +19,8 @@ $targetTab = '<要操作的标签完整名称>'
 & $cli -Action SelectTab -Hwnd $hwnd -ExpectedTab $currentTab -TabName $targetTab
 ```
 
+标签发现仅读取 Firefox 浏览器工具栏的 `tabbrowser-tabs`，避免把网页内的 TabItem 当成浏览器标签。
+
 每次修改都先核对目标。标签、地址或前台窗口变化会中止操作。窗口被最小化时不会自动恢复。操作输入需要让指定 Firefox 窗口成为前台；只读 Inspect 不改变前台。
 
 | Action | 额外参数 / 返回含义 |
@@ -32,7 +34,7 @@ $targetTab = '<要操作的标签完整名称>'
 | ConsoleWrite | `-File` UTF-8；CodeMirror 使用 `-PasteConsole` 真实粘贴并恢复剪贴板；返回 `consoleSha256`，不执行；已有内容需明确 `-ReplaceConsole` |
 | ConsoleExecute | `-ConsoleSha256`；只执行与写入时完全一致的内容 |
 | ReadConsole | `-Sentinel`，只输出匹配该标记的结果 |
-| SendKeys | `-Focus Chrome\|Console\|Editor -Keys`，Editor 名称可用 `-EditorName` 配置 |
+| SendKeys | `-Focus Chrome\|Console\|Editor -Keys`，Editor 名称可用 `-EditorName` 配置；仅接受唯一、非 Offscreen 的 Edit 控件 |
 | Invoke | 唯一 `-AutomationId` 或 `-ElementName`，可用 `-ScopeId` 缩小范围 |
 
 ReadConsole 与所有修改操作都需要 `-Hwnd -ExpectedTab`。`-ExpectedUrl` 可选，比较完整地址（仅兼容 Firefox 隐去 https://）；它不是文档 URL 的替代。地址栏被用户编辑后，应检查草稿，不自动修正。

@@ -1,6 +1,6 @@
 {
   "name": "chatgpt-queue-accent-userscript",
-  "version": "1.6.2",
+  "version": "1.7.0",
   "private": true,
   "license": "GPL-3.0-or-later",
   "scripts": {

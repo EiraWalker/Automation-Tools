@@ -6,7 +6,7 @@
 | --- | --- | --- |
 | [Firefox 原生自动化](browser/firefox-native-automation/README.md) | 窗口与标签页识别、Web Console、Tampermonkey 更新、草稿保护、可选已有会话 MCP 桥接 | [firefox-native-automation](browser/firefox-native-automation/SKILL.md) |
 | [后台窗口截图](windows/background-window-capture/README.md) | 通过 AgentCapture 的 WGC / PrintWindow 截取已有窗口 | [background-window-capture](windows/background-window-capture/SKILL.md) |
-| [ChatGPT Queue](userscripts/chatgpt-queue/README.md) | 原生输入框排队发送、跟随 Accent color、默认会话全宽 | [chatgpt-queue-userscript](userscripts/chatgpt-queue/SKILL.md) |
+| [ChatGPT Queue](userscripts/chatgpt-queue/README.md) | Chat / Work / Codex Cloud 原生输入框排队发送、跟随 Accent color、默认会话全宽 | [chatgpt-queue-userscript](userscripts/chatgpt-queue/SKILL.md) |
 
 ## 使用
 

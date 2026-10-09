@@ -1,3 +1,11 @@
+# 2026-10-09 更新验收
+
+ChatGPT Queue 1.7.0：62/62 测试与语法检查通过；已安装源码与产物哈希一致（ee99aabc50540a577ce7841b3662d9ab8f208fd2d1e2397280ed5c0fa825796c）。原生 Firefox 真实 Work 和用户指定 Codex Cloud 会话均完成两条连续消息，分别采样 busy=true/rows=1 与 busy=true/rows=0，最终无错误。队列在接收/运行开始时出队。使用原生编辑器与合成 Ctrl+Q；物理按键、真实工具/审批任务未在新增模式重测。详细证据见[队列验收](userscripts/chatgpt-queue/VALIDATION.md)。
+
+Native 自动化 1.1.1：TabItem 查找限定浏览器工具栏；Editor 要求真实 Edit 控件。PowerShell 5.1 / 7 的 policy/parser 8 项及 LiveReadOnly 均通过，识别 1 个现有窗口，错误目标拒绝，前台保持。可见编辑器被 UIA 标成 Offscreen 时仍拒绝 SendKeys。两个指定页面的原生 Console 执行、源码保存/核验、刷新、连续发送及清理已实时验证；后台 WGC 截图已查看，私人记录未发布。
+
+以下保留 2026-10-06 的历史验收，不将历史范围视为本轮全部重测。
+
 # 验证记录
 
 日期：2026-10-06。这里保留汇总结果，不发布网页截图、消息内容、会话地址、扩展 UUID 或本机窗口标识。
