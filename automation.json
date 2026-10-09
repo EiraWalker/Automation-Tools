@@ -1,0 +1,131 @@
+{
+  "schema_version": 1,
+  "env": {},
+  "phases": {
+    "install": {
+      "steps": [
+        {
+          "name": "queue-dependencies",
+          "argv": [
+            "pwsh",
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            "npm ci --ignore-scripts"
+          ],
+          "cwd": "firefox-chatgpt-toolkit/userscripts/chatgpt-queue",
+          "timeout_seconds": 180
+        },
+        {
+          "name": "native-dependencies",
+          "argv": [
+            "pwsh",
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            "npm ci --ignore-scripts"
+          ],
+          "cwd": "firefox-chatgpt-toolkit/browser/firefox-native-automation",
+          "timeout_seconds": 180
+        }
+      ]
+    },
+    "verify": {
+      "steps": [
+        {
+          "name": "queue-tests",
+          "argv": [
+            "{python}",
+            "scripts/verify-project.py",
+            "node-tests",
+            "firefox-chatgpt-toolkit/userscripts/chatgpt-queue"
+          ],
+          "cwd": ".",
+          "timeout_seconds": 180
+        },
+        {
+          "name": "queue-syntax",
+          "argv": [
+            "node",
+            "--check",
+            "chatgpt-queue.user.js"
+          ],
+          "cwd": "firefox-chatgpt-toolkit/userscripts/chatgpt-queue",
+          "timeout_seconds": 30
+        },
+        {
+          "name": "native-tests",
+          "argv": [
+            "{python}",
+            "scripts/verify-project.py",
+            "node-tests",
+            "firefox-chatgpt-toolkit/browser/firefox-native-automation"
+          ],
+          "cwd": ".",
+          "timeout_seconds": 180
+        },
+        {
+          "name": "native-policy-ps51",
+          "argv": [
+            "powershell.exe",
+            "-NoProfile",
+            "-NonInteractive",
+            "-File",
+            "tests/native-policy.ps1"
+          ],
+          "cwd": "firefox-chatgpt-toolkit/browser/firefox-native-automation",
+          "timeout_seconds": 30
+        },
+        {
+          "name": "native-policy-ps7",
+          "argv": [
+            "pwsh",
+            "-NoProfile",
+            "-NonInteractive",
+            "-File",
+            "tests/native-policy.ps1"
+          ],
+          "cwd": "firefox-chatgpt-toolkit/browser/firefox-native-automation",
+          "timeout_seconds": 30
+        },
+        {
+          "name": "capture-tests",
+          "argv": [
+            "{python}",
+            "scripts/verify-project.py",
+            "capture-tests"
+          ],
+          "cwd": ".",
+          "timeout_seconds": 60
+        },
+        {
+          "name": "documentation",
+          "argv": [
+            "{python}",
+            "scripts/verify-project.py",
+            "docs"
+          ],
+          "cwd": ".",
+          "timeout_seconds": 30
+        }
+      ]
+    },
+    "native-readonly": {
+      "steps": [
+        {
+          "name": "native-inspection",
+          "argv": [
+            "powershell.exe",
+            "-NoProfile",
+            "-NonInteractive",
+            "-File",
+            "tests/native-policy.ps1",
+            "-LiveReadOnly"
+          ],
+          "cwd": "firefox-chatgpt-toolkit/browser/firefox-native-automation",
+          "timeout_seconds": 30
+        }
+      ]
+    }
+  }
+}

@@ -1,6 +1,6 @@
 ---
 name: chatgpt-queue-userscript
-description: Install, use, maintain and validate the Tampermonkey ChatGPT Queue userscript in existing Firefox. Supports Chat, Work and current Codex Cloud /local conversations, native composers, automatic queued turns, effective Accent color and configurable full-width conversations.
+description: Install, maintain or validate the ChatGPT Queue Tampermonkey script in existing Firefox. Covers Chat/Work/Codex queue adapters, Obsidian answer archiving, OpenAI-compatible classification, preview settings and real-page acceptance.
 ---
 
 # ChatGPT Queue userscript
@@ -10,6 +10,10 @@ Read [README.md](README.md) for installation and user behavior. Install the comp
 Use the native composer in Chat, Work or Codex Cloud. Ctrl+Q enqueues; Enter enqueues during generation or when queued items exist, while idle Enter stays native. There is no enqueue/run button or second message textarea. Queue rows contain only unsent prompts: pop on confirmed receipt/start, keep the accepted turn separately until its answer completes, then dispatch the next prompt. The last prompt hides the list at start; `Ctrl + Q  Enqueue` stays visible. The userscript menu opens its settings; full width defaults on. The UI follows the actual site's background/text/font and effective Accent color.
 
 For changes, use Node.js 22.13+, `npm ci --ignore-scripts`, `npm test`, `npm run build`, and `npm run check`. Source locations: `src/core.cjs` for queue state/persistence, `src/browser.js` for page adapter/UI/locking, `src/queue.css` for styling, and `src/notice-card.js` for the reusable rounded notice card with accent/neutral actions. Keep the generated script synchronized with source and preserve GPL/source attribution.
+
+For Obsidian archiving, read the README's save/setup section and [archive plan](../../docs/obsidian-export/plan.md). `src/archive-dom.js` owns per-answer identity, question pairing and Markdown; `src/archive-core.cjs` owns classification and verified writes; `src/archive-browser.js` owns GM transport, preview and notifications. Keep queue state and credentials separate. Obtain keys through the user's local configuration, store them in GM configuration, and record only their presence in diagnostics.
+
+Archive acceptance must show the installed toolbar icon, disabled generation state, editable title/folder/tags preview without body, a real classified result, and a note read back after saving. Check overwrite and path migration independently. Record Chat, Work and Codex evidence separately. Trust the known local Obsidian certificate through the user's Firefox certificate UI when required; API tests with a process-local trusted public certificate do not prove browser connectivity. Preserve HTTPS verification. Confirm coded errors appear at the upper right and classification failure leaves manual save available.
 
 Validate adapter changes against the current logged-in ChatGPT frontend in the user's existing Firefox and the explicitly designated test tab. If available, use the companion firefox-native-automation and background-window-capture skills. Preserve the native draft, avoid other conversations, and confirm the installed script works after reload and SPA navigation. Fixtures and console injection into one tab alone do not prove Tampermonkey is installed site-wide.
 

@@ -1,0 +1,7 @@
+# GPT Enhancement 工作区
+
+当前插件开发入口为 [项目 context](firefox-chatgpt-toolkit/docs/CONTEXT.md)。修改代码前读取该文档；架构决策、开发操作和验证边界由它指向各自文档。
+
+仓库根保留 Automation-Tools 的完整 Git 历史和原有模块。ChatGPT Queue 的活跃源码为 `firefox-chatgpt-toolkit/userscripts/chatgpt-queue`。`.local/legacy-workspace` 与旧目录是迁移备份，不是第二个开发入口。
+
+本机工作目录为 `D:\projects\GPT Enhancemnet`，目录拼写沿用用户指定值。

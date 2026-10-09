@@ -1,0 +1,35 @@
+{
+  "date": "2026-10-10",
+  "timezone": "Asia/Taipei",
+  "migrationHead": "bab6f11982c32b89c74863abca10cbe8a43ddc1b",
+  "trackedFilesHashMatched": 107,
+  "sourceBackupPreserved": true,
+  "privateArchiveIgnored": true,
+  "lockedDependenciesReinstalled": true,
+  "verifyStatus": "passed",
+  "testCounts": {
+    "queue-tests": 62,
+    "native-tests": 11,
+    "capture-tests": 7
+  },
+  "nativePolicy": {
+    "powershell51": 8,
+    "powershell7": 8,
+    "liveReadOnlyExecuted": false
+  },
+  "documentation": {
+    "filesChecked": 14,
+    "brokenLinks": 0
+  },
+  "verifyCommandsPassed": 7,
+  "verifySeconds": 35.688,
+  "userscriptVersion": "1.7.0",
+  "userscriptSha256": "ee99aabc50540a577ce7841b3662d9ab8f208fd2d1e2397280ed5c0fa825796c",
+  "browserOrProfileChanged": false,
+  "liveChatGPTRetested": false,
+  "report": "output/automation/20261009T171226Z-e9560eef/report.json",
+  "graphProjects": [
+    "gpt-enhancement-queue",
+    "gpt-enhancement-native"
+  ]
+}

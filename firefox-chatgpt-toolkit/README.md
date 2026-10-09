@@ -2,15 +2,19 @@
 
 本目录收录开发 ChatGPT Queue 油猴脚本时用到的本地自动化方法、工具和配套 skill。连接已有 Firefox，不创建测试浏览器或独立配置文件。
 
+维护入口：[项目 context](docs/CONTEXT.md)、[架构与 ADR](docs/architecture.md)、[开发与验证](docs/development.md)。2026-10-10 的本机工作区迁移及边界见[迁移记录](docs/migration-2026-10-10.md)。
+
 | 模块 | 用途 | Skill |
 | --- | --- | --- |
 | [Firefox 原生自动化](browser/firefox-native-automation/README.md) | 窗口与标签页识别、Web Console、Tampermonkey 更新、草稿保护、可选已有会话 MCP 桥接 | [firefox-native-automation](browser/firefox-native-automation/SKILL.md) |
 | [后台窗口截图](windows/background-window-capture/README.md) | 通过 AgentCapture 的 WGC / PrintWindow 截取已有窗口 | [background-window-capture](windows/background-window-capture/SKILL.md) |
-| [ChatGPT Queue](userscripts/chatgpt-queue/README.md) | Chat / Work / Codex Cloud 原生输入框排队发送、跟随 Accent color、默认会话全宽 | [chatgpt-queue-userscript](userscripts/chatgpt-queue/SKILL.md) |
+| [ChatGPT Queue](userscripts/chatgpt-queue/README.md) | Chat / Work / Codex Cloud 队列、Accent color、会话全宽和 Obsidian 问答归档 | [chatgpt-queue-userscript](userscripts/chatgpt-queue/SKILL.md) |
 
 ## 使用
 
 日常使用队列：将 [chatgpt-queue.user.js](userscripts/chatgpt-queue/chatgpt-queue.user.js) 完整内容保存到 Firefox 的 Tampermonkey 中。安装和更新后刷新已有 ChatGPT 标签页。无需 Node.js、MCP、API Key 或本地服务。
+
+Obsidian 归档另需运行目标库的 Local REST API 插件并配置 AI 分类服务；具体设置与保存规则见[插件使用说明](userscripts/chatgpt-queue/README.md#保存到-obsidian)。
 
 原生浏览器自动化：Windows PowerShell 5.1 或 PowerShell 7 执行 `firefox-native.ps1 -Action Inspect`，从实时返回结果选取目标 HWND 和标签页名称，再按照模块 README 操作。独立的 PowerShell 操作不依赖 npm。
 

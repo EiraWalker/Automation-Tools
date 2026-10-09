@@ -48,3 +48,12 @@ dialog h2 { margin: 0 0 18px; color: var(--cq-text); font-size: 16px; font-weigh
 .setting input { width: 18px; height: 18px; margin: 0; flex-shrink: 0; accent-color: var(--cq-accent); }
 .setting input:focus-visible { outline: 2px solid var(--cq-accent); outline-offset: 3px; }
 dialog .footer { justify-content: flex-end; }
+:host(#chatgpt-archive-preview), :host(#chatgpt-archive-notices) { margin: 0; width: 0; height: 0; }
+:host(#chatgpt-archive-preview) dialog, :host(#chatgpt-queue-settings) dialog { width: min(540px, calc(100vw - 32px)); max-height: calc(100dvh - 40px); overflow: auto; }
+.archive-field { display: flex; flex-direction: column; gap: 7px; margin: 14px 0; color: var(--cq-text); }
+.archive-field input { width: 100%; min-width: 0; padding: 10px 12px; border: 1px solid var(--cq-border); border-radius: 10px; background: var(--cq-card); color: var(--cq-text); font: inherit; }
+.archive-field input:focus-visible { outline: 2px solid var(--cq-accent); outline-offset: 1px; }
+.archive-path { font-size: 12px; color: var(--cq-muted); overflow-wrap: anywhere; margin: 12px 0; }
+.archive-progress, .archive-new { white-space: normal; margin: 8px 0; }
+.archive-toast { position: fixed; z-index: 2147483647; right: 20px; top: 20px; max-width: min(440px, calc(100vw - 40px)); padding: 14px 18px; border: 1px solid var(--cq-border); border-radius: 16px; background: var(--cq-settings-bg, var(--cq-bg)); color: var(--cq-text); box-shadow: 0 8px 35px #0005; overflow-wrap: anywhere; }
+dialog h3 { font-size: 14px; margin: 22px 0 10px; font-weight: 600; }

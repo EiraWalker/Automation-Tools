@@ -6,3 +6,6 @@ state/
 client_secret*.json
 credentials*.json
 .env*
+.local/
+output/automation/
+.codebase-memory/

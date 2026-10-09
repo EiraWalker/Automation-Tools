@@ -1,0 +1,41 @@
+{
+  "version": "1.8.0",
+  "date": "2026-10-10",
+  "sourceSha256": "aa5916d4a111a40ebad3cbb61278172c43b25655dd7667f67008a4bd2191946a",
+  "installedSha256Matches": true,
+  "installedEnabled": true,
+  "xmlHttpRequestGrant": true,
+  "verificationRun": "20261009T185720Z-841bf7a9",
+  "pluginTests": { "passed": 83, "queue": 62, "archive": 21 },
+  "nativeTestsPassed": 11,
+  "captureTestsPassed": 7,
+  "syntaxPassed": true,
+  "documentationPassed": true,
+  "liveApis": {
+    "model": "gemini-3.8-flash-high",
+    "classification": true,
+    "referenceFolders": 112,
+    "referenceTags": 143,
+    "writeReadbackOverwriteMigration": true,
+    "independentAnswerRecords": true,
+    "syntheticNotesCleaned": 3,
+    "tlsVerificationPreserved": true
+  },
+  "nativeFirefox": {
+    "existingProfile": true,
+    "method": "guarded native Web Console invoking installed userscript controls",
+    "chat": { "classified": true, "edited": true, "saved": true, "overwritten": true, "migrated": true, "oldPathRemoved": true, "actualArchiveRetained": true },
+    "work": { "classified": true, "edited": true, "saved": true, "questionAndAnswerMatch": true, "modeMatches": true },
+    "codex": { "classified": true, "edited": true, "saved": true, "questionAndAnswerMatch": true, "modeMatches": true, "allButtonsInFinalAnswer": true },
+    "previewFields": 3,
+    "previewBodyHidden": true,
+    "unavailableApiErrorObserved": "A_OBSIDIAN_UNAVAILABLE",
+    "errorToastUpperRight": true,
+    "userTrustedObsidianCertificate": true,
+    "browserTestNotesCleaned": 2,
+    "backgroundScreenshotsViewed": true,
+    "newPromptsSent": 0
+  },
+  "fixtureOnly": ["generating-button-disabled", "regenerated-answer-identity", "rich-markdown-formats", "ai-failure-manual-save", "cancellation-and-navigation"],
+  "notRevalidated": ["queue-real-send", "physical-key-or-mouse-events", "other-codex-layouts", "unloaded-history"]
+}

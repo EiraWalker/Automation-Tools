@@ -326,8 +326,8 @@ class QueuePanel {
 }
 
 class QueueSettings {
-  constructor({ read, write, apply, register }) {
-    this.read = read; this.write = write; this.apply = apply;
+  constructor({ read, write, apply, register, archive }) {
+    this.read = read; this.write = write; this.apply = apply; this.archive = archive;
     register('ChatGPT Queue · Accent 设置', () => this.open());
   }
   open() {
@@ -347,10 +347,27 @@ class QueueSettings {
           this.checkbox.checked = this.read(); this.error.textContent = error.message; this.error.hidden = false;
         }
       });
+      if (this.archive) {
+        const fields = document.createElement('section');
+        const labels = [['vaultPath', 'Obsidian 库路径'], ['obsidianUrl', 'Obsidian API 地址'], ['obsidianKey', 'Obsidian API key'], ['aiUrl', 'AI API 地址'], ['aiKey', 'AI API key'], ['model', '模型 ID']];
+        const title = document.createElement('h3'); title.textContent = 'Obsidian 归档'; fields.append(title);
+        this.archiveInputs = {};
+        for (const [name, text] of labels) {
+          const label = document.createElement('label'); label.className = 'archive-field'; label.append(document.createTextNode(text));
+          const input = document.createElement('input'); input.name = name; input.type = name.endsWith('Key') ? 'password' : 'text'; input.autocomplete = 'off'; input.spellcheck = false;
+          label.append(input); fields.append(label); this.archiveInputs[name] = input;
+        }
+        dialog.querySelector('.error').before(fields);
+        dialog.querySelector('.footer').append(button('保存配置', () => {
+          try { this.archive.configure(Object.fromEntries(Object.entries(this.archiveInputs).map(([name, input]) => [name, input.value.trim()]))); this.error.hidden = true; this.archive.notify('归档配置已保存。'); dialog.close(); }
+          catch (error) { this.error.textContent = error.message; this.error.hidden = false; }
+        }, 'pill solid'));
+      }
       dialog.querySelector('.footer').append(button('完成', () => dialog.close(), 'pill solid'));
       this.root.append(dialog); document.body.append(this.host);
     }
     this.checkbox.checked = this.read();
+    if (this.archiveInputs) { const config = this.archive.config(); for (const [name, input] of Object.entries(this.archiveInputs)) input.value = config[name]; }
     this.syncTheme();
     if (!this.dialog.open) this.dialog.showModal();
   }
@@ -383,10 +400,12 @@ async function bootQueue() {
   const layoutKey = 'cq-accent-layout-v1';
   const readWidth = () => Boolean(GM_getValue(layoutKey, true));
   const layout = new WideLayout(readWidth());
+  const archive = typeof ArchiveController === 'function' ? new ArchiveController({ adapter: () => adapter }) : null;
   const settings = new QueueSettings({
     read: readWidth, write: enabled => GM_setValue(layoutKey, enabled),
     apply: enabled => { layout.enabled = enabled; layout.update(adapter); },
     register: (name, callback) => GM_registerMenuCommand(name, callback),
+    archive,
   });
   const tempKey = sessionStorage.getItem('cq-accent-temp') || uuid();
   sessionStorage.setItem('cq-accent-temp', tempKey);
@@ -408,7 +427,7 @@ async function bootQueue() {
     remove: id => act(() => engine.remove(id)), move: (id, delta) => act(() => engine.move(id, delta)),
     diagnostics: () => {
       try {
-        GM_setClipboard(JSON.stringify({ ...engine.diagnostics(), scriptVersion: '1.7.0', owner }, null, 2), 'text');
+        GM_setClipboard(JSON.stringify({ ...engine.diagnostics(), scriptVersion: '1.8.0', owner }, null, 2), 'text');
         panel.faultCard.buttons[0].textContent = '诊断已复制';
       } catch (error) {
         panel.faultCard.setMessage(`复制诊断失败（${engine.state.fault?.code || 'Q_DIAGNOSTIC_COPY_FAILED'}）。`);
@@ -483,6 +502,7 @@ async function bootQueue() {
     if (route() !== currentRoute || (surfaceKind() && surfaceKind() !== currentMode)) { attach().catch(error => { notice = error.message; attaching = false; render(); }); return; }
     panel.mount(adapter);
     layout.update(adapter);
+    archive?.update();
     if (owner) engine.tick().catch(error => { notice = error.message; render(); });
     if (engine.status !== lastStatus) { lastStatus = engine.status; render(); }
   }, 500);
@@ -502,7 +522,7 @@ async function bootQueue() {
   window.addEventListener('pagehide', () => {
     clearInterval(interval);
     try { engine?.dispose(); } finally { release?.(); owner = false; }
-    GM_removeValueChangeListener(layoutListener); layout.dispose(); settings.dispose();
+    GM_removeValueChangeListener(layoutListener); layout.dispose(); settings.dispose(); archive?.dispose();
     if (listener !== undefined) GM_removeValueChangeListener(listener);
   });
   window.addEventListener('pageshow', event => {

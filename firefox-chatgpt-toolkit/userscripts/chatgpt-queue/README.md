@@ -1,6 +1,6 @@
 # ChatGPT Queue · Accent
 
-Firefox + Tampermonkey 的单文件油猴脚本。当前版本 1.7.0。支持 ChatGPT Chat、Work，以及当前 Codex Cloud 的 `/local/*` 会话页面。
+Firefox + Tampermonkey 的单文件油猴脚本。当前版本 1.8.0。支持 ChatGPT Chat、Work，以及当前 Codex Cloud 的 `/local/*` 会话页面，新增对应问答保存到 Obsidian。
 
 ## 安装
 
@@ -11,7 +11,7 @@ Firefox + Tampermonkey 的单文件油猴脚本。当前版本 1.7.0。支持 Ch
 
 如果面板没有出现，打开本脚本的 Settings → User excludes，确认没有排除 `chatgpt.com`；脚本开关开启不代表被排除的网站也会运行。脚本匹配整个 `https://chatgpt.com/*`，没有限定验收聊天。
 
-不需要 Node.js、API Key、本地服务或 Firefox DevTools MCP 来日常使用。
+使用队列和全宽不需要 Node.js、API key、本地服务或 Firefox DevTools MCP。Obsidian 归档需要目标库的 Local REST API 插件和 OpenAI 兼容分类服务。
 不支持 Greasemonkey 的仅异步 GM API；本版本以 Tampermonkey 为目标。
 
 ## 使用
@@ -29,6 +29,23 @@ Firefox + Tampermonkey 的单文件油猴脚本。当前版本 1.7.0。支持 Ch
 - 会话全宽默认开启。点击 Firefox 工具栏 Tampermonkey → ChatGPT Queue · Accent 下的“设置”，在脚本设置面板勾选/取消“会话全宽”；修改立即保存并生效，刷新和切换聊天后保留。聊天页面没有全宽按钮。配置面板直接读取 ChatGPT 页面的实际背景、文字、字体和明暗模式；边框和控件跟随当前主题，按钮与复选框使用当前 Accent color。
 
 新聊天先通过原生 Enter 发送首条消息、取得会话 ID；随后生成回答时即可直接排队。首次建立会话前用 Ctrl+Q 放入的队列会迁入新会话，在原生输入框为空时按 Ctrl+Q 接续。没有跨会话自动调度。
+
+## 保存到 Obsidian
+
+1. 打开目标 Obsidian 库并启用 **Local REST API for Obsidian**。首版只连接单个库，不启动额外后台服务。
+2. 在 ChatGPT 标签点击 Firefox 工具栏 Tampermonkey → **ChatGPT Queue · Accent 设置**。填写库路径、Obsidian API 地址和 API key、AI API 地址与 key、模型 ID，点击“保存配置”。Obsidian key 与 AI key 是两项独立凭证。
+3. 本机预设库路径为 `E:\Obsidian`，Obsidian 地址为 `https://127.0.0.1:27124`，AI 地址为 `http://127.0.0.1:8045/v1`，模型为 `gemini-3.8-flash-high`。密钥默认留空，填写后仅存于 Tampermonkey 本地配置。
+4. 使用 HTTPS 时，先在同一个 Firefox 打开 Obsidian API 地址，核对并信任插件自己的证书，否则浏览器请求会失败。脚本不关闭 TLS 校验。Obsidian 官方[连接说明](https://github.com/coddingtonbear/obsidian-local-rest-api)提供证书配置方式。
+5. 在回答下方操作栏点击“保存到 Obsidian”图标。每次只保存对应的一问一答；生成中的回答暂时禁用按钮。
+6. AI 根据这次问答、库内目录树和已有标签建议标题、文件夹及标签。预览只显示这三项和最终路径，可以修改；新目录/标签会标明。点击“保存”归档，取消不写入笔记。
+
+问答正文保持原始 Markdown，保留代码、公式、表格和来源链接。附件仅记录名称和可取得的来源，不下载文件；不保存工具执行日志。AI 只整理元信息，不改写正文，不读取其他笔记正文。
+
+同一回答重复保存直接覆盖，包括手动修改过的归档内容；重新生成的回答独立归档。文件名附稳定回答短标识，避免同名不同回答相互覆盖。改标题或目录时先写入并核验新路径，再删除旧路径；失败保留错误和重试所需记录。
+
+Obsidian 未运行、API 不可用或凭证错误时，页面右上角显示具体错误码。AI 分类失败仍可在预览中手动填写并保存。Console 只记录错误码；维护工具可监听 `chatgpt-archive:error`，事件 detail 仅包含错误码。没有专门的超长输入处理策略。
+
+库路径用于显示目标位置；REST 插件实际操作其所在的已打开库，修改磁盘路径不会切换库。现有连接权限包含 `127.0.0.1` 与 `localhost`；其他主机需要配置 Tampermonkey 的请求授权。
 
 ## Accent color
 
@@ -77,6 +94,9 @@ src/core.cjs          队列状态机与持久化边界
 src/browser.js        ChatGPT 页面适配、队列 UI、跨标签互斥
 src/queue.css         跟随 Accent color 的样式
 src/notice-card.js    可复用的圆框与双色按钮提示组件
+src/archive-core.cjs  分类接口、元信息、保存与迁移
+src/archive-dom.js    对应问答提取与 Markdown 转换
+src/archive-browser.js  回答栏按钮、元信息预览与错误通知
 tests/               状态机与 DOM 适配测试
 build.cjs            无依赖构建器
 LICENSE              GPL v3 全文
@@ -84,10 +104,10 @@ THIRD_PARTY_NOTICES.md  上游参考与许可证说明
 ```
 
 重建不需要安装依赖：`node build.cjs`。
-开发测试：使用 Node.js 22.13+，执行 `npm install`，然后 `npm test` 与 `npm run check`。
+开发测试：使用 Node.js 22.13+，按锁文件执行 `npm ci --ignore-scripts`，然后 `npm test` 与 `npm run check`。统一入口见[开发与验证](../../docs/development.md)。
 
 UI 参考 [kgruiz/chatgpt-queue](https://github.com/kgruiz/chatgpt-queue)，本项目以 GPL-3.0-or-later 提供完整源码。
 
 ## 验证边界
 
-详见 `VALIDATION.md`。1.7.0 已正式安装到原生 Firefox，安装源码 SHA-256 与产物一致。真实 Work 和用户指定的 Codex Cloud 会话分别验证两条消息顺序发送、运行开始出队及回答完成；62 项测试和语法检查通过。本轮用原生编辑器加合成 Ctrl+Q 事件调用已安装脚本，未把它称为物理快捷键验收；原生 Ctrl+Q 的既有验证见 1.6.2 记录。
+详见 [VALIDATION.md](VALIDATION.md)。1.8.0 的 83 项测试覆盖队列兼容性、归档、预览及三种页面结构；当前原生 Firefox 安装内容与构建哈希一致。真实 Obsidian 与分类 API 已验证，Chat、Work 和当前 Codex 页面均完成分类、编辑及保存。生成中禁用、重新生成版本及复杂格式的覆盖范围见验证记录。1.7.0 的 Work/Codex 队列历史证据与新增归档证据分别保留。
