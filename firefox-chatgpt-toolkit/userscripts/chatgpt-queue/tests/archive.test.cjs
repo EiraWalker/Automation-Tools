@@ -117,6 +117,16 @@ test('button injection is idempotent and navigation disposes the prior preview a
   controller.preview = { dispose: () => { controller.disposedPreview = true; } };
   adapter = new f.ChatGPTAdapter('other'); controller.update(); assert.equal(controller.disposedPreview, true); assert.equal(f.w.document.querySelectorAll('[data-cq-archive-button]').length, 2); controller.dispose();
 });
+test('archive icon follows the native action color when toolbar inheritance has no contrast', t => {
+  const f = dom(markup); t.after(f.close);
+  const toolbar = f.w.document.querySelector('.actions'), native = toolbar.querySelector('button');
+  toolbar.style.color = 'black'; native.style.color = 'rgb(175, 175, 175)';
+  const controller = new f.ArchiveController({ adapter: () => new f.ChatGPTAdapter('fixture'), read: (_key, fallback) => fallback, write: () => {} });
+  controller.update(); const host = toolbar.querySelector('[data-cq-archive-button]');
+  assert.equal(f.w.getComputedStyle(host).color, f.w.getComputedStyle(native).color);
+  native.style.color = 'rgb(93, 93, 93)'; controller.update();
+  assert.equal(f.w.getComputedStyle(host).color, f.w.getComputedStyle(native).color); controller.dispose();
+});
 test('preview has only metadata fields, lets users manually save after AI failure, and cancellation writes nothing', async t => {
   const f = dom(markup); t.after(f.close); let writes = 0;
   const controller = new f.ArchiveController({ adapter: () => new f.ChatGPTAdapter('fixture'), read: (_key, fallback) => fallback, write: () => { writes++; } });

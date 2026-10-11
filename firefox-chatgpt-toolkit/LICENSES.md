@@ -1,6 +1,7 @@
 # 许可证
 
 - Firefox 原生自动化：MIT，见模块 LICENSE。
+- Puppeteer 后台任务封装与规范：MIT；依赖 puppeteer-core 为 Apache-2.0，经 npm 安装并保留其许可证。
 - 本目录的共享文档：MIT，同 Firefox 原生自动化模块 LICENSE。
 - 后台截图适配器：来自 EiraWalker/AgentCapture 的 agentcapture skill，MIT，保留原版权声明；AgentCapture 可执行程序需另行取得。
 - ChatGPT 队列油猴脚本：GPL-3.0-or-later，包含完整许可证和 THIRD_PARTY_NOTICES.md。

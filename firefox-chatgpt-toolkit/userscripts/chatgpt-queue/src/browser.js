@@ -1,5 +1,7 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
 const page = typeof unsafeWindow === 'undefined' ? window : unsafeWindow;
+const scriptInfo = typeof GM_info === 'undefined' ? {} : GM_info;
+const scriptVersion = String(scriptInfo.script?.version || 'unknown');
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 const visible = element => Boolean(element && element.getClientRects().length && getComputedStyle(element).visibility !== 'hidden');
 const firstVisible = (selector, root = document) => [...root.querySelectorAll(selector)].find(visible) || null;
@@ -246,6 +248,9 @@ class QueuePanel {
   constructor(actions) {
     this.actions = actions;
     this.host = document.createElement('div'); this.host.id = 'chatgpt-queue-accent';
+    this.host.dataset.cqVersion = scriptVersion;
+    this.host.dataset.cqScriptHandler = String(scriptInfo.scriptHandler || 'unknown');
+    this.host.dataset.cqInjectInto = String(scriptInfo.injectInto || 'unknown');
     this.root = this.host.attachShadow({ mode: 'open' });
     const style = document.createElement('style'); style.textContent = QUEUE_CSS; this.root.append(style);
     const section = document.createElement('section'); section.setAttribute('aria-label', '消息队列');
@@ -427,7 +432,7 @@ async function bootQueue() {
     remove: id => act(() => engine.remove(id)), move: (id, delta) => act(() => engine.move(id, delta)),
     diagnostics: () => {
       try {
-        GM_setClipboard(JSON.stringify({ ...engine.diagnostics(), scriptVersion: '1.8.0', owner }, null, 2), 'text');
+        GM_setClipboard(JSON.stringify({ ...engine.diagnostics(), scriptVersion, scriptHandler: scriptInfo.scriptHandler || 'unknown', owner }, null, 2), 'text');
         panel.faultCard.buttons[0].textContent = '诊断已复制';
       } catch (error) {
         panel.faultCard.setMessage(`复制诊断失败（${engine.state.fault?.code || 'Q_DIAGNOSTIC_COPY_FAILED'}）。`);

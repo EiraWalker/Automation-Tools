@@ -1,10 +1,12 @@
 # ChatGPT Queue 架构
 
-本文描述 1.8.0 的实现边界，更新于 2026-10-10。当前工作环境、证据日期与剩余任务见 [CONTEXT.md](CONTEXT.md)，选择原因见 [ADR](adr/README.md)。
+本文描述 1.9.0 的实现边界，更新于 2026-10-12。当前工作环境、证据日期与剩余任务见 [CONTEXT.md](CONTEXT.md)，选择原因见 [ADR](adr/README.md)。
 
 ## 开发与运行边界
 
-源码入口是本 Git 根目录的 `firefox-chatgpt-toolkit/userscripts/chatgpt-queue`。`build.cjs` 将本地模块与 CSS 组装为同目录 `chatgpt-queue.user.js`，用户将完整产物安装到 Firefox Tampermonkey。
+源码入口是本 Git 根目录的 `firefox-chatgpt-toolkit/userscripts/chatgpt-queue`。`build.cjs` 将本地模块与 CSS 组装为同目录 `chatgpt-queue.user.js`，完整产物运行于 Firefox / Firefox Nightly 的 Violentmonkey；版本基线以 [运行环境](CONTEXT.md#项目运行环境) 为准。
+
+元数据显式声明 `@inject-into page`，供原生 ProseMirror 编辑器对象访问和页面侧 Web Locks 协作使用；不能将 `content` 注入当作等价路径。仍保留 Tampermonkey 的 `@sandbox JavaScript` 和同步 GM 接口，维护同一套源码。页面 CSP、实际注入上下文及跨上下文回调需要分别进行真实浏览器验证，元数据和 jsdom 测试只证明声明及局部契约。决策见 [ADR 0012](adr/0012-violentmonkey.md)。
 
 队列运行依赖已安装脚本、当前 ChatGPT 页面、GM 存储和浏览器 Web Locks。可选的问答归档通过 GM_xmlhttpRequest 连接 Obsidian Local REST API 和 OpenAI 兼容分类接口。Native Firefox 自动化与后台截图模块用于开发验收；Node.js/jsdom 用于构建和本地测试，均不是日常运行依赖。
 
@@ -12,7 +14,7 @@
 flowchart LR
   Input[原生输入框与快捷键] --> Capture[NativeQueueInput]
   Capture --> Engine[QueueEngine]
-  Engine --> GM[Tampermonkey 本地状态]
+  Engine --> GM[当前脚本管理器的本地状态]
   Engine --> Adapter[ChatGPTAdapter]
   Adapter --> Page[当前 Chat / Work / Codex 页面]
   Page --> Adapter
@@ -59,11 +61,19 @@ Chat、Work 和 Codex 共用调度引擎，前端差异集中在 adapter。Work 
 
 [archive-browser.js](../userscripts/chatgpt-queue/src/archive-browser.js) 管理工具栏图标、三个可编辑预览字段、右上角通知、GM 请求与配置。用户编辑字段后，晚到的 AI 建议不会覆盖编辑；取消或导航使旧预览失效。配置键 `cq-accent-archive-config-v1` 和映射前缀 `cq-accent-archive-note-v1:` 独立于队列状态和全宽设置。API key 只保存在用户的 GM 配置中。
 
+迁移保持 name、namespace 和所有 GM 键。同一管理器内更新沿用已有数据；Tampermonkey 与 Violentmonkey 的存储隔离，源码安装不迁移旧配置、归档映射或队列。切换先结束当前任务、停用旧实例，并在安全时正常重载相关页面；不将运行中的队列复制给另一个管理器。旧数据与加密备份保留，配置重新填写、归档映射的单独迁移须核验后再记录完成。
+
 归档失败以 `[ChatGPT Archive][CODE]` 和 `chatgpt-archive:error` 事件报告，事件仅含错误代码。分类失败保留手动保存；保存失败保留预览。协议选择见 [ADR 0008](adr/0008-obsidian-rest-api.md)。
+
+GM 传输保留 `anonymous: true` 与 Tampermonkey 的 `redirect: 'error'` 兼容选项；Violentmonkey 2.49.0 不支持后者。响应必须提供可解析且与请求地址一致的 `finalUrl`（仅忽略 fragment），否则按 `A_REQUEST_RESPONSE` 或 `A_REQUEST_REDIRECT` 拒绝采用；3xx 同样拒绝。失败不会继续验证归档、更新路径映射或删除旧笔记。最终地址检查发生在网络请求之后，不提供重定向前的凭证和正文保护，API 必须使用可信的直接响应端点。
 
 ## 验证与数据
 
 本地状态机测试检查发送、恢复和错误不变量；DOM/完整生成脚本测试检查页面信号、事件监听、原生输入复用及模式隔离。它们不能代替当前真实前端验收。带日期的 [VALIDATION.md](../userscripts/chatgpt-queue/VALIDATION.md) 与 `validation-*.json` 保留实际验证范围。
+
+源码构建的更新地址继续为 `none`。本机发布流程生成独立的递增四段版本，更新元数据和源码下载均使用稳定别名，历史发布文件与哈希不可变归档。服务按原子当前指针提供完整快照；元数据和源码请求之间发生发布时，后者可能取得更新版本，不保证跨请求同版。Violentmonkey 沿用已安装记录的下载地址，旧安装中固定版本的地址须通过原生管理流程一次性修正，见 [ADR 0011](adr/0011-native-userscript-updates.md)。
+
+Violentmonkey 按其原生更新周期检查。源码构建、本机发布、HTTP 下载、扩展持久安装、页面运行版本和业务验收是独立证据；两个 Firefox 通道分别核验。已授权的后台脚本安装可使用管理器原生流程；浏览器权限确认和 Firefox 扩展页调试限制不因更换脚本管理器而消失。
 
 2026-10-09 的 Work/Codex 真实验收使用短文字 prompt 和合成 Ctrl+Q。新增模式的物理按键、完整工具/审批流程及其他 Codex URL/layout 未完整验证。迁移时的本地检查只证明新路径的工作环境，不把历史浏览器结果更新为今天的验证。
 

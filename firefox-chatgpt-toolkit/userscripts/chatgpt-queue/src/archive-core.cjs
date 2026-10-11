@@ -53,7 +53,10 @@ class ArchiveService {
     const url = archiveEndpoint(this.config[ai ? 'aiUrl' : 'obsidianUrl'], suffix);
     let response;
     try { response = await this.request({ url, method, headers: { Authorization: `Bearer ${key}`, Accept: markdown ? 'text/markdown' : 'application/json', ...(body !== undefined ? { 'Content-Type': markdown ? 'text/markdown; charset=utf-8' : 'application/json' } : {}) }, ...(body !== undefined ? { data: markdown ? body : JSON.stringify(body) } : {}), timeout: ai ? 120000 : 20000 }); }
-    catch (error) { throw archiveFailure(ai ? 'A_AI_UNAVAILABLE' : 'A_OBSIDIAN_UNAVAILABLE', ai ? 'AI API 请求失败，请检查连接配置。' : 'Obsidian API 不可用，请打开目标库并检查连接和证书。'); }
+    catch (error) {
+      if (['A_REQUEST_PERMISSION', 'A_REQUEST_REDIRECT', 'A_REQUEST_RESPONSE'].includes(error?.code)) throw error;
+      throw archiveFailure(ai ? 'A_AI_UNAVAILABLE' : 'A_OBSIDIAN_UNAVAILABLE', ai ? 'AI API 请求失败，请检查连接配置。' : 'Obsidian API 不可用，请打开目标库并检查连接和证书。');
+    }
     if (allowMissing && response.status === 404) return null;
     if (response.status < 200 || response.status >= 300) throw archiveFailure(ai ? 'A_AI_HTTP' : 'A_OBSIDIAN_HTTP', `${ai ? 'AI' : 'Obsidian'} API 返回 HTTP ${response.status}。`);
     if (markdown || method === 'DELETE' || !response.text) return response.text || '';

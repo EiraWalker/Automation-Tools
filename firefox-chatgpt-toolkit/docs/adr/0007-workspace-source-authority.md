@@ -2,6 +2,8 @@
 
 状态：已采纳。日期：2026-10-10。
 
+2026-10-11 更新：本机路径被 [ADR 0009](0009-puppeteer-background-validation.md) 取代为 `E:\firefox dev`；以下保留首次迁移的历史事实。
+
 ## 背景
 
 用户要求把工作环境迁移至 `D:\projects\GPT Enhancemnet`，并建立持久化项目文档。旧环境同时存在 outputs 中的源码、副本式发布 checkout、研究克隆和私有浏览器证据。

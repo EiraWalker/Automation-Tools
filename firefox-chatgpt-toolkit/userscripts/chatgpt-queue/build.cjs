@@ -2,16 +2,18 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const root = __dirname;
+const { version } = require('./package.json');
 const metadata = `// ==UserScript==
 // @name         ChatGPT Queue · Accent
 // @namespace    local.chatgpt-queue-accent
-// @version      1.8.0
+// @version      ${version}
 // @description  ChatGPT 消息队列、会话全宽与 Obsidian 问答归档，跟随当前 Accent color。
 // @match        https://chatgpt.com/*
 // @run-at       document-idle
 // @noframes
 // @updateURL    none
 // @downloadURL  none
+// @inject-into  page
 // @sandbox      JavaScript
 // @grant        GM_getValue
 // @grant        GM_setValue

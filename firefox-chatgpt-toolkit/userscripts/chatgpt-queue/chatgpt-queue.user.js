@@ -1,13 +1,14 @@
 // ==UserScript==
 // @name         ChatGPT Queue · Accent
 // @namespace    local.chatgpt-queue-accent
-// @version      1.8.0
+// @version      1.9.0
 // @description  ChatGPT 消息队列、会话全宽与 Obsidian 问答归档，跟随当前 Accent color。
 // @match        https://chatgpt.com/*
 // @run-at       document-idle
 // @noframes
 // @updateURL    none
 // @downloadURL  none
+// @inject-into  page
 // @sandbox      JavaScript
 // @grant        GM_getValue
 // @grant        GM_setValue
@@ -340,7 +341,10 @@ class ArchiveService {
     const url = archiveEndpoint(this.config[ai ? 'aiUrl' : 'obsidianUrl'], suffix);
     let response;
     try { response = await this.request({ url, method, headers: { Authorization: `Bearer ${key}`, Accept: markdown ? 'text/markdown' : 'application/json', ...(body !== undefined ? { 'Content-Type': markdown ? 'text/markdown; charset=utf-8' : 'application/json' } : {}) }, ...(body !== undefined ? { data: markdown ? body : JSON.stringify(body) } : {}), timeout: ai ? 120000 : 20000 }); }
-    catch (error) { throw archiveFailure(ai ? 'A_AI_UNAVAILABLE' : 'A_OBSIDIAN_UNAVAILABLE', ai ? 'AI API 请求失败，请检查连接配置。' : 'Obsidian API 不可用，请打开目标库并检查连接和证书。'); }
+    catch (error) {
+      if (['A_REQUEST_PERMISSION', 'A_REQUEST_REDIRECT', 'A_REQUEST_RESPONSE'].includes(error?.code)) throw error;
+      throw archiveFailure(ai ? 'A_AI_UNAVAILABLE' : 'A_OBSIDIAN_UNAVAILABLE', ai ? 'AI API 请求失败，请检查连接配置。' : 'Obsidian API 不可用，请打开目标库并检查连接和证书。');
+    }
     if (allowMissing && response.status === 404) return null;
     if (response.status < 200 || response.status >= 300) throw archiveFailure(ai ? 'A_AI_HTTP' : 'A_OBSIDIAN_HTTP', `${ai ? 'AI' : 'Obsidian'} API 返回 HTTP ${response.status}。`);
     if (markdown || method === 'DELETE' || !response.text) return response.text || '';
@@ -503,7 +507,28 @@ function archiveSyncTheme(host) {
 function archiveRequest(options) {
   return new Promise((resolve, reject) => {
     if (typeof GM_xmlhttpRequest !== 'function') { reject(archiveFailure('A_REQUEST_PERMISSION', '脚本缺少 API 请求权限，请重新安装完整脚本。')); return; }
-    GM_xmlhttpRequest({ ...options, anonymous: true, redirect: 'error', onload: response => resolve({ status: response.status, text: response.responseText }), onerror: () => reject(new Error('network')), ontimeout: () => reject(new Error('timeout')), onabort: () => reject(new Error('aborted')) });
+    const request = {
+      ...options, anonymous: true,
+      // Tampermonkey supports this option; Violentmonkey 2.49 ignores it and
+      // follows XHR redirects. The finalUrl check rejects the returned response,
+      // but cannot prevent a redirect from transmitting credentials or a body.
+      redirect: 'error',
+      onload: response => {
+        let expected, actual;
+        try {
+          expected = new URL(options.url); actual = new URL(response.finalUrl);
+          expected.hash = ''; actual.hash = '';
+        } catch (_) { reject(archiveFailure('A_REQUEST_RESPONSE', '无法核对 API 响应地址，请检查脚本管理器和连接配置。')); return; }
+        if (actual.href !== expected.href || (response.status >= 300 && response.status < 400)) {
+          reject(archiveFailure('A_REQUEST_REDIRECT', 'API 返回了重定向响应，请填写无需重定向的 API 地址。')); return;
+        }
+        resolve({ status: response.status, text: response.responseText });
+      },
+      onerror: () => reject(new Error('network')),
+      ontimeout: () => reject(new Error('timeout')),
+      onabort: () => reject(new Error('aborted')),
+    };
+    try { GM_xmlhttpRequest(request); } catch (_) { reject(new Error('network')); }
   });
 }
 class ArchivePreview {
@@ -595,6 +620,8 @@ class ArchiveController {
         root.append(style, control); toolbar.append(host); item = { host, control }; this.buttons.set(node, item);
       }
       if (item.host.parentElement !== toolbar) toolbar.append(item.host);
+      const nativeControl = toolbar.querySelector('[data-testid="copy-turn-action-button"],button[aria-label="Copy"]') || toolbar.querySelector('button');
+      if (nativeControl) item.host.style.color = getComputedStyle(nativeControl).color;
       item.control.disabled = !reader.complete(node) || !adapter.conversation;
     }
     this.preview?.syncTheme();
@@ -631,6 +658,8 @@ class ArchiveController {
 
 /* SPDX-License-Identifier: GPL-3.0-or-later */
 const page = typeof unsafeWindow === 'undefined' ? window : unsafeWindow;
+const scriptInfo = typeof GM_info === 'undefined' ? {} : GM_info;
+const scriptVersion = String(scriptInfo.script?.version || 'unknown');
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 const visible = element => Boolean(element && element.getClientRects().length && getComputedStyle(element).visibility !== 'hidden');
 const firstVisible = (selector, root = document) => [...root.querySelectorAll(selector)].find(visible) || null;
@@ -877,6 +906,9 @@ class QueuePanel {
   constructor(actions) {
     this.actions = actions;
     this.host = document.createElement('div'); this.host.id = 'chatgpt-queue-accent';
+    this.host.dataset.cqVersion = scriptVersion;
+    this.host.dataset.cqScriptHandler = String(scriptInfo.scriptHandler || 'unknown');
+    this.host.dataset.cqInjectInto = String(scriptInfo.injectInto || 'unknown');
     this.root = this.host.attachShadow({ mode: 'open' });
     const style = document.createElement('style'); style.textContent = QUEUE_CSS; this.root.append(style);
     const section = document.createElement('section'); section.setAttribute('aria-label', '消息队列');
@@ -1058,7 +1090,7 @@ async function bootQueue() {
     remove: id => act(() => engine.remove(id)), move: (id, delta) => act(() => engine.move(id, delta)),
     diagnostics: () => {
       try {
-        GM_setClipboard(JSON.stringify({ ...engine.diagnostics(), scriptVersion: '1.8.0', owner }, null, 2), 'text');
+        GM_setClipboard(JSON.stringify({ ...engine.diagnostics(), scriptVersion, scriptHandler: scriptInfo.scriptHandler || 'unknown', owner }, null, 2), 'text');
         panel.faultCard.buttons[0].textContent = '诊断已复制';
       } catch (error) {
         panel.faultCard.setMessage(`复制诊断失败（${engine.state.fault?.code || 'Q_DIAGNOSTIC_COPY_FAILED'}）。`);

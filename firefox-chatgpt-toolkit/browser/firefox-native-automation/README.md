@@ -2,6 +2,8 @@
 
 Windows 本地 CLI，复用正在运行的 Firefox。Windows PowerShell 5.1 和 PowerShell 7 均可使用；原生操作无需 npm 或远程调试端口。
 
+当前项目运行环境为 Firefox / Firefox Nightly + Violentmonkey；安装、更新和真实页面验收使用 [Puppeteer 后台流程](../firefox-puppeteer/README.md)。本模块当前用于只读窗口盘点，以下前台 UIAutomation、Web Console 与 Tampermonkey 更新说明保留为历史工具参考。
+
 ## 窗口和标签页
 
 ```powershell

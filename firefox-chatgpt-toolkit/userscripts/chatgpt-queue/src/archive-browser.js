@@ -8,7 +8,28 @@ function archiveSyncTheme(host) {
 function archiveRequest(options) {
   return new Promise((resolve, reject) => {
     if (typeof GM_xmlhttpRequest !== 'function') { reject(archiveFailure('A_REQUEST_PERMISSION', '脚本缺少 API 请求权限，请重新安装完整脚本。')); return; }
-    GM_xmlhttpRequest({ ...options, anonymous: true, redirect: 'error', onload: response => resolve({ status: response.status, text: response.responseText }), onerror: () => reject(new Error('network')), ontimeout: () => reject(new Error('timeout')), onabort: () => reject(new Error('aborted')) });
+    const request = {
+      ...options, anonymous: true,
+      // Tampermonkey supports this option; Violentmonkey 2.49 ignores it and
+      // follows XHR redirects. The finalUrl check rejects the returned response,
+      // but cannot prevent a redirect from transmitting credentials or a body.
+      redirect: 'error',
+      onload: response => {
+        let expected, actual;
+        try {
+          expected = new URL(options.url); actual = new URL(response.finalUrl);
+          expected.hash = ''; actual.hash = '';
+        } catch (_) { reject(archiveFailure('A_REQUEST_RESPONSE', '无法核对 API 响应地址，请检查脚本管理器和连接配置。')); return; }
+        if (actual.href !== expected.href || (response.status >= 300 && response.status < 400)) {
+          reject(archiveFailure('A_REQUEST_REDIRECT', 'API 返回了重定向响应，请填写无需重定向的 API 地址。')); return;
+        }
+        resolve({ status: response.status, text: response.responseText });
+      },
+      onerror: () => reject(new Error('network')),
+      ontimeout: () => reject(new Error('timeout')),
+      onabort: () => reject(new Error('aborted')),
+    };
+    try { GM_xmlhttpRequest(request); } catch (_) { reject(new Error('network')); }
   });
 }
 class ArchivePreview {
@@ -100,6 +121,8 @@ class ArchiveController {
         root.append(style, control); toolbar.append(host); item = { host, control }; this.buttons.set(node, item);
       }
       if (item.host.parentElement !== toolbar) toolbar.append(item.host);
+      const nativeControl = toolbar.querySelector('[data-testid="copy-turn-action-button"],button[aria-label="Copy"]') || toolbar.querySelector('button');
+      if (nativeControl) item.host.style.color = getComputedStyle(nativeControl).color;
       item.control.disabled = !reader.complete(node) || !adapter.conversation;
     }
     this.preview?.syncTheme();

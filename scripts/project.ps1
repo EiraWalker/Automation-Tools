@@ -1,5 +1,5 @@
 param(
- [ValidateSet('install','verify','native-readonly')][string]$Phase = 'verify',
+ [ValidateSet('install','verify','native-readonly','firefox-doctor','firefox-environment','firefox-inspect')][string]$Phase = 'verify',
  [string]$AutomationSkill = (Join-Path $env:USERPROFILE '.codex\skills\project-dev-automation'),
  [string]$Python = 'python'
 )

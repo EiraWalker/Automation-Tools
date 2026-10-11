@@ -2,6 +2,8 @@
 
 日期：2026-10-10。状态：用户已授权执行计划；1.8.0 已实现、安装并完成下方记录范围内的真实验收。术语见 [CONTEXT.md](CONTEXT.md)。
 
+2026-10-12 环境更新：归档随用户脚本运行于 Firefox / Firefox Nightly 的 Violentmonkey，基线见 [项目运行环境](../CONTEXT.md#项目运行环境)。下方 1.8.0 记录属于迁移前历史；Violentmonkey 上的归档按钮与保存验收仍以当前 [验收记录](../../userscripts/chatgpt-queue/VALIDATION.md) 为准。
+
 ## 用户已提出的需求
 
 - 在截图所示回答操作栏增加保存到 Obsidian 的按钮。

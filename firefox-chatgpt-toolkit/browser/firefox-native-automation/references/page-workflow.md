@@ -1,4 +1,6 @@
-# Web Console 与 Tampermonkey
+# 历史流程：Web Console 与 Tampermonkey
+
+2026-10-12 更新：当前项目运行环境为 Firefox / Firefox Nightly + Violentmonkey，安装与更新使用 [后台更新工作流](../../firefox-puppeteer/references/userscript-workflow.md)，页面验收遵循 [Puppeteer 任务规范](../../firefox-puppeteer/SKILL.md)。下文保留迁移前的工具用法和 Tampermonkey 编辑器流程，作为历史参考。
 
 ## 生成和执行
 

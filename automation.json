@@ -27,6 +27,18 @@
           ],
           "cwd": "firefox-chatgpt-toolkit/browser/firefox-native-automation",
           "timeout_seconds": 180
+        },
+        {
+          "name": "puppeteer-dependencies",
+          "argv": [
+            "pwsh",
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            "npm ci --ignore-scripts --no-audit --no-fund --cache \"{root}/.local/npm-cache\""
+          ],
+          "cwd": "firefox-chatgpt-toolkit/browser/firefox-puppeteer",
+          "timeout_seconds": 180
         }
       ]
     },
@@ -52,6 +64,17 @@
           ],
           "cwd": "firefox-chatgpt-toolkit/userscripts/chatgpt-queue",
           "timeout_seconds": 30
+        },
+        {
+          "name": "puppeteer-tests",
+          "argv": [
+            "{python}",
+            "scripts/verify-project.py",
+            "node-tests",
+            "firefox-chatgpt-toolkit/browser/firefox-puppeteer"
+          ],
+          "cwd": ".",
+          "timeout_seconds": 180
         },
         {
           "name": "native-tests",
@@ -124,6 +147,44 @@
           ],
           "cwd": "firefox-chatgpt-toolkit/browser/firefox-native-automation",
           "timeout_seconds": 30
+        }
+      ]
+    },
+    "firefox-doctor": {
+      "steps": [
+        {
+          "name": "firefox-doctor",
+          "argv": [
+            "node",
+            "scripts/firefox.mjs",
+            "doctor"
+          ],
+          "cwd": "firefox-chatgpt-toolkit/browser/firefox-puppeteer",
+          "timeout_seconds": 45
+        }
+      ]
+    },
+    "firefox-inspect": {
+      "steps": [
+        {
+          "name": "firefox-inspect",
+          "argv": [
+            "node",
+            "scripts/firefox.mjs",
+            "inspect"
+          ],
+          "cwd": "firefox-chatgpt-toolkit/browser/firefox-puppeteer",
+          "timeout_seconds": 120
+        }
+      ]
+    },
+    "firefox-environment": {
+      "steps": [
+        {
+          "name": "firefox-environment",
+          "argv": ["node", "scripts/firefox.mjs", "environment"],
+          "cwd": "firefox-chatgpt-toolkit/browser/firefox-puppeteer",
+          "timeout_seconds": 120
         }
       ]
     }

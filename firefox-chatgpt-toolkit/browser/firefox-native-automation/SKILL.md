@@ -1,9 +1,15 @@
 ---
 name: firefox-native-automation
-description: Operate an existing Firefox window on Windows using guarded UIAutomation, prepare and execute Web Console tasks, update Tampermonkey scripts, and preserve drafts. Use for real logged-in Firefox validation or attaching a local MCP bridge to an already-running session.
+description: Inspect existing Firefox windows on Windows and consult historical UIAutomation, Web Console, Tampermonkey update and MCP bridge workflows. Current ChatGPT Violentmonkey installation and page acceptance use the firefox-puppeteer background tasks.
 ---
 
 # Existing Firefox automation
+
+For the current `E:\firefox dev` workspace, routine browser verification follows
+[Puppeteer background tasks](../firefox-puppeteer/SKILL.md). The foreground workflow
+below is historical and does not override the user's non-interference requirement.
+Use this module's Inspect command for read-only window inventory; use Puppeteer for
+page tasks under the current project policy.
 
 Use the module's scripts relative to this SKILL.md. Start with `scripts/firefox-native.ps1 -Action Inspect`; choose an exact window HWND and named tab from the current inventory. Keep the user's existing Firefox profile and session. Do not infer authorization to launch, restart, or create a separate browser from a request to inspect a page.
 
