@@ -21,14 +21,14 @@ Firefox 后台连接、安装更新和截图工具属于开发与验收设施。
 | 修改队列、页面适配器或持久化状态 | [架构](docs/architecture.md)、相关 [ADR](docs/adr/README.md)、[插件说明](userscripts/chatgpt-queue/README.md) |
 | 修改 Obsidian 归档 | [归档 context](docs/obsidian-export/CONTEXT.md)、[已确认计划](docs/obsidian-export/plan.md) |
 | 构建、依赖安装或验证 | [开发流程](docs/development.md)、仓库根 [自动化清单](../automation.json) |
-| Firefox 连接、网页诊断或真实验收 | [Puppeteer skill](browser/firefox-puppeteer/SKILL.md)及其任务规范 |
-| 安装、更新油猴脚本 | [后台更新工作流](browser/firefox-puppeteer/references/userscript-workflow.md) |
+| Firefox 连接、网页诊断或真实验收 | [独立工具 skill](https://github.com/EiraWalker/Firefox-Nightly-Automation/blob/main/skills/firefox-nightly-automation/SKILL.md) |
+| 安装、更新油猴脚本 | 管理器原生安装流程；旧自动更新工具已退役，归档文档仅供追溯 |
 | 截图 | 已安装的 AgentCapture skill、[项目截图适配器](windows/background-window-capture/README.md) |
 
 ## 代码发现与修改
 
 - 优先使用 codebase-memory-mcp：`search_graph` 定位符号，`trace_path` 查调用关系，`get_code_snippet` 读实现；复杂关系使用 `query_graph`。索引不存在或路径过期时先 `index_repository`。
-- 插件索引为 `gpt-enhancement-queue`，浏览器索引为 `firefox-puppeteer`、`gpt-enhancement-native`。字符串、配置、非代码文档及图谱覆盖缺口可使用 `rg`。
+- 插件索引为 `gpt-enhancement-queue`，Firefox 自动化索引为 `firefox-nightly-automation`，位于独立仓库。字符串、配置、非代码文档及图谱覆盖缺口可使用 `rg`。
 - 查询第三方库/API 的用法、配置或兼容性时，通过 Context7 先 resolve-library-id，再按单一主题 query-docs；一般业务逻辑修改无需查询库文档。
 - 插件实现位于 `userscripts/chatgpt-queue/src/`，修改源模块后运行构建。`chatgpt-queue.user.js` 是生成产物，不能仅编辑产物交付。
 - 优先复用锁定依赖及成熟连接器。Puppeteer 负责协议；项目代码只承载目标选择、业务任务和证据采集。新增依赖按模块锁文件维护。
@@ -62,7 +62,7 @@ pwsh -NoProfile -File .\scripts\project.ps1 -Phase verify
 
 核对退出码、报告及每个步骤结果。纯文档变更检查链接和路径即可，无需触发浏览器或重复业务测试。真实网页验收分别覆盖受影响的 Chat、Work、Codex 适配器；fixture 不能替代真实网页证据。
 
-安装或更新任务进入 `browser/firefox-puppeteer`，按更新工作流执行 `npm run userscript:update`。它会测试、构建、保存版本并启动或复用本机更新源；保持脚本身份及用户配置，由油猴按自身周期检查更新。首次绑定由用户确认，不自动刷新已有聊天或热替换正在运行的队列。收尾说明服务运行状态、到期时间和停止方式。
+旧 Firefox 模块中的 userscript:update/stop 等专用命令已退役；不要从历史记录推定其仍可调用。用户脚本继续通过管理器原生流程安装，不刷新正在使用的聊天。
 
 分别记录本地发布、HTTP 下载、油猴管理页中的已安装且启用版本、指定页面运行版本、真实业务结果。只有对应证据成立，才报告该层验收通过；按钮存在不等于可见，点击不等于消息送达，下载不等于扩展安装成功。
 

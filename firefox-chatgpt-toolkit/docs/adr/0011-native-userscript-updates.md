@@ -23,7 +23,7 @@
 
 ## 2026-10-11 安装验收修正
 
-本机发布及 HTTP 下载已通过，但首次安装仍未完成。用户明确授权配置 `moz-extension://` 调试权限；下一步使用 [Nightly 系统访问入口](../../browser/firefox-puppeteer/references/system-access.md)，待用户正常结束当前 Nightly 会话后以带权限的新进程进入扩展管理页完成安装，并核对管理页中的真实版本。发布流程保留用于后续更新，安装成功不能再由请求日志或用户打开链接推定。
+本机发布及 HTTP 下载已通过，但首次安装仍未完成。用户明确授权配置 `moz-extension://` 调试权限；下一步使用 [Nightly 系统访问入口](https://github.com/EiraWalker/Automation-Tools/blob/legacy/firefox-automation-20261017/firefox-chatgpt-toolkit/browser/firefox-puppeteer/references/system-access.md)，待用户正常结束当前 Nightly 会话后以带权限的新进程进入扩展管理页完成安装，并核对管理页中的真实版本。发布流程保留用于后续更新，安装成功不能再由请求日志或用户打开链接推定。
 
 ## 2026-10-12：Violentmonkey 使用稳定下载地址
 
@@ -37,4 +37,4 @@
 
 日常发布无需控制浏览器。更新不是即时推送；受油猴设置、服务在线时间、权限确认影响。已打开聊天继续运行旧版，正常下次加载才使用新版本。初次绑定和油猴实际自动安装需要分别验证，不能仅依据 HTTP 成功报告完成。
 
-操作与上游依据见 [工作流](../../browser/firefox-puppeteer/references/userscript-workflow.md)。
+操作与上游依据见 [工作流](https://github.com/EiraWalker/Automation-Tools/blob/legacy/firefox-automation-20261017/firefox-chatgpt-toolkit/browser/firefox-puppeteer/references/userscript-workflow.md)。

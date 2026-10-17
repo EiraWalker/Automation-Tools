@@ -15,30 +15,6 @@
           ],
           "cwd": "firefox-chatgpt-toolkit/userscripts/chatgpt-queue",
           "timeout_seconds": 180
-        },
-        {
-          "name": "native-dependencies",
-          "argv": [
-            "pwsh",
-            "-NoProfile",
-            "-NonInteractive",
-            "-Command",
-            "npm ci --ignore-scripts"
-          ],
-          "cwd": "firefox-chatgpt-toolkit/browser/firefox-native-automation",
-          "timeout_seconds": 180
-        },
-        {
-          "name": "puppeteer-dependencies",
-          "argv": [
-            "pwsh",
-            "-NoProfile",
-            "-NonInteractive",
-            "-Command",
-            "npm ci --ignore-scripts --no-audit --no-fund --cache \"{root}/.local/npm-cache\""
-          ],
-          "cwd": "firefox-chatgpt-toolkit/browser/firefox-puppeteer",
-          "timeout_seconds": 180
         }
       ]
     },
@@ -66,52 +42,6 @@
           "timeout_seconds": 30
         },
         {
-          "name": "puppeteer-tests",
-          "argv": [
-            "{python}",
-            "scripts/verify-project.py",
-            "node-tests",
-            "firefox-chatgpt-toolkit/browser/firefox-puppeteer"
-          ],
-          "cwd": ".",
-          "timeout_seconds": 180
-        },
-        {
-          "name": "native-tests",
-          "argv": [
-            "{python}",
-            "scripts/verify-project.py",
-            "node-tests",
-            "firefox-chatgpt-toolkit/browser/firefox-native-automation"
-          ],
-          "cwd": ".",
-          "timeout_seconds": 180
-        },
-        {
-          "name": "native-policy-ps51",
-          "argv": [
-            "powershell.exe",
-            "-NoProfile",
-            "-NonInteractive",
-            "-File",
-            "tests/native-policy.ps1"
-          ],
-          "cwd": "firefox-chatgpt-toolkit/browser/firefox-native-automation",
-          "timeout_seconds": 30
-        },
-        {
-          "name": "native-policy-ps7",
-          "argv": [
-            "pwsh",
-            "-NoProfile",
-            "-NonInteractive",
-            "-File",
-            "tests/native-policy.ps1"
-          ],
-          "cwd": "firefox-chatgpt-toolkit/browser/firefox-native-automation",
-          "timeout_seconds": 30
-        },
-        {
           "name": "capture-tests",
           "argv": [
             "{python}",
@@ -130,61 +60,6 @@
           ],
           "cwd": ".",
           "timeout_seconds": 30
-        }
-      ]
-    },
-    "native-readonly": {
-      "steps": [
-        {
-          "name": "native-inspection",
-          "argv": [
-            "powershell.exe",
-            "-NoProfile",
-            "-NonInteractive",
-            "-File",
-            "tests/native-policy.ps1",
-            "-LiveReadOnly"
-          ],
-          "cwd": "firefox-chatgpt-toolkit/browser/firefox-native-automation",
-          "timeout_seconds": 30
-        }
-      ]
-    },
-    "firefox-doctor": {
-      "steps": [
-        {
-          "name": "firefox-doctor",
-          "argv": [
-            "node",
-            "scripts/firefox.mjs",
-            "doctor"
-          ],
-          "cwd": "firefox-chatgpt-toolkit/browser/firefox-puppeteer",
-          "timeout_seconds": 45
-        }
-      ]
-    },
-    "firefox-inspect": {
-      "steps": [
-        {
-          "name": "firefox-inspect",
-          "argv": [
-            "node",
-            "scripts/firefox.mjs",
-            "inspect"
-          ],
-          "cwd": "firefox-chatgpt-toolkit/browser/firefox-puppeteer",
-          "timeout_seconds": 120
-        }
-      ]
-    },
-    "firefox-environment": {
-      "steps": [
-        {
-          "name": "firefox-environment",
-          "argv": ["node", "scripts/firefox.mjs", "environment"],
-          "cwd": "firefox-chatgpt-toolkit/browser/firefox-puppeteer",
-          "timeout_seconds": 120
         }
       ]
     }

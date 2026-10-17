@@ -1,5 +1,8 @@
 # ChatGPT 使用体验优化项目 context
 
+Firefox 自动化更新（2026-10-17）：唯一活跃工具和 skill 位于[独立仓库](https://github.com/EiraWalker/Firefox-Nightly-Automation)；旧 firefox-puppeteer、firefox-native-automation 及其专用命令已退役。下方旧工具记录保留历史日期，不能作为当前调用入口。
+
+
 更新：2026-10-12。本文件承载持续维护所需的当前状态；选择理由记入 [ADR](adr/README.md)，实现边界见 [架构](architecture.md)。
 
 ## 项目与源码权威
@@ -14,7 +17,7 @@
 
 ## 项目运行环境
 
-产品运行环境为 **Firefox / Firefox Nightly + Violentmonkey**，Violentmonkey 版本基线为 **2.49.0**。脚本安装、设置、GM 状态持久化和原生更新均以 Violentmonkey 为标准，环境选择见 [ADR 0012](adr/0012-violentmonkey.md)，操作见 [安装更新工作流](../browser/firefox-puppeteer/references/userscript-workflow.md)。
+产品运行环境为 **Firefox / Firefox Nightly + Violentmonkey**，Violentmonkey 版本基线为 **2.49.0**。脚本安装、设置、GM 状态持久化和原生更新均以 Violentmonkey 为标准，环境选择见 [ADR 0012](adr/0012-violentmonkey.md)，操作见 [安装更新工作流](https://github.com/EiraWalker/Automation-Tools/blob/legacy/firefox-automation-20261017/firefox-chatgpt-toolkit/browser/firefox-puppeteer/references/userscript-workflow.md)。
 
 日常队列运行依赖已登录的 ChatGPT 网页和已安装的用户脚本。Node.js、Puppeteer 和截图工具用于开发、发布与验收；启用问答归档时另需 Obsidian Local REST API 和所配置的 AI 服务。
 
@@ -42,9 +45,9 @@ Nightly 在自有后台新文档中已确认实际运行版本 1.9.0.3、Violent
 
 真实原生更新发现 Violentmonkey 沿用已安装脚本的 downloadURL：旧固定地址导致取得 1.9.0.2 元数据后仍下载 1.9.0.1。发布器已改用稳定下载别名，通过管理器原生编辑一次性修正旧安装后，手动触发单脚本原生更新，成功从 1.9.0.1 升到 1.9.0.3；独立持久核验再次确认源码哈希及两个稳定 URL。此结果证明真实原生更新流程，尚未等待或验证定时自动检查周期。规则修正见 [ADR 0011](adr/0011-native-userscript-updates.md)。
 
-两个管理器的 GM 存储独立。本轮按正确嵌套结构检查 Nightly 的目标旧存储槽，未发现归档配置或路径映射，发现 **2 个残留队列存储键**；这些键保留，未迁移、未重放，不能等同两条待发消息。普通 Firefox 旧存储未检查；旧数据与已验证的加密备份保留。未发送新 prompt、未写入 Obsidian。源码、安装、实际注入与业务验收分别记证据；最新记录见 [浏览器验收](../browser/firefox-puppeteer/VALIDATION.md)。
+两个管理器的 GM 存储独立。本轮按正确嵌套结构检查 Nightly 的目标旧存储槽，未发现归档配置或路径映射，发现 **2 个残留队列存储键**；这些键保留，未迁移、未重放，不能等同两条待发消息。普通 Firefox 旧存储未检查；旧数据与已验证的加密备份保留。未发送新 prompt、未写入 Obsidian。源码、安装、实际注入与业务验收分别记证据；最新记录见 [浏览器验收](https://github.com/EiraWalker/Automation-Tools/blob/legacy/firefox-automation-20261017/firefox-chatgpt-toolkit/browser/firefox-puppeteer/VALIDATION.md)。
 
-本机更新源仍运行，预计 2026-10-13 03:16（UTC+8）到期；在 `browser/firefox-puppeteer` 执行 `npm run userscript:stop` 可停止自有服务。服务停止不影响已安装脚本，仅影响后续更新检查；完整步骤见 [工作流](../browser/firefox-puppeteer/references/userscript-workflow.md)。
+本机更新源仍运行，预计 2026-10-13 03:16（UTC+8）到期；在 `browser/firefox-puppeteer` 执行 `npm run userscript:stop` 可停止自有服务。服务停止不影响已安装脚本，仅影响后续更新检查；完整步骤见 [工作流](https://github.com/EiraWalker/Automation-Tools/blob/legacy/firefox-automation-20261017/firefox-chatgpt-toolkit/browser/firefox-puppeteer/references/userscript-workflow.md)。
 
 ## 工作区迁移与历史证据
 
@@ -78,20 +81,20 @@ ChatGPT 前端会变化。改动 adapter 后需在明确指定的真实聊天验
 
 2026-10-11 用户要求验收不得干扰其他工作。停止前台激活、切换标签、键鼠及剪贴板操作；保留后台截图和已有后台调试协议路径。当前只读检查未发现 Firefox 调试监听端口，主进程也未启用 remote-debugging 或 Marionette 参数。1.8.1 的安装和真实页面验收因此待完成；后续按 [开发流程](development.md) 的后台约束继续，不再要求用户置前窗口或自行重启浏览器。
 
-同日用户确认采用成熟连接器并迁移整个项目。`browser/firefox-puppeteer` 已安装锁定的 Puppeteer Core 25.13.0；任务规范见该模块 [SKILL](../browser/firefox-puppeteer/SKILL.md)，迁移理由见 [ADR 0009](adr/0009-puppeteer-background-validation.md)。
+同日用户确认采用成熟连接器并迁移整个项目。`browser/firefox-puppeteer` 已安装锁定的 Puppeteer Core 25.13.0；任务规范见该模块 [SKILL](https://github.com/EiraWalker/Automation-Tools/blob/legacy/firefox-automation-20261017/firefox-chatgpt-toolkit/browser/firefox-puppeteer/SKILL.md)，迁移理由见 [ADR 0009](adr/0009-puppeteer-background-validation.md)。
 
-用户随后报告命令行调试启动会遭到 Cloudflare 拒绝，并安装、登录了 Nightly 160.0a1、手动开启 Remote Control。现已通过官方运行时入口连接用户指定的后台 ChatGPT 聊天，webdriver 为 false 且 getter 未被页面覆盖；窗口、可见标签、剪贴板和草稿采样保持不变，断开后浏览器继续运行。工具增加运行时进程核对与 `firefox-environment` 统一入口，依据见 [ADR 0010](adr/0010-nightly-runtime-remote-control.md)，具体证据范围见 [工具验收](../browser/firefox-puppeteer/VALIDATION.md)。
+用户随后报告命令行调试启动会遭到 Cloudflare 拒绝，并安装、登录了 Nightly 160.0a1、手动开启 Remote Control。现已通过官方运行时入口连接用户指定的后台 ChatGPT 聊天，webdriver 为 false 且 getter 未被页面覆盖；窗口、可见标签、剪贴板和草稿采样保持不变，断开后浏览器继续运行。工具增加运行时进程核对与 `firefox-environment` 统一入口，依据见 [ADR 0010](adr/0010-nightly-runtime-remote-control.md)，具体证据范围见 [工具验收](https://github.com/EiraWalker/Automation-Tools/blob/legacy/firefox-automation-20261017/firefox-chatgpt-toolkit/browser/firefox-puppeteer/VALIDATION.md)。
 
 本次只读检查未刷新页面、发送消息或安装用户脚本。新测试聊天未检测到归档按钮，这不能证明其他安装状态；1.8.1 在 Nightly 的正式安装和实际图标显示仍待业务验收。已加载页面正常不代表新的 Cloudflare 挑战一定通过。测试窗口及原生连接确认由用户管理，日常工具继续只在后台工作。
 
-用户要求不干扰工作的安装更新流程。现采用 [ADR 0011](adr/0011-native-userscript-updates.md) 的油猴原生元数据发布：本机发布副本 `1.8.1.1` 已生成，但 HTTP 请求只证明脚本被下载。源码构建仍为 1.8.1；发布副本仅改写版本和更新 URL。发布流程及后台服务命令见 [安装更新工作流](../browser/firefox-puppeteer/references/userscript-workflow.md)。指定聊天没有运行标记；不能由下载记录推定扩展已保存脚本。
+用户要求不干扰工作的安装更新流程。现采用 [ADR 0011](adr/0011-native-userscript-updates.md) 的油猴原生元数据发布：本机发布副本 `1.8.1.1` 已生成，但 HTTP 请求只证明脚本被下载。源码构建仍为 1.8.1；发布副本仅改写版本和更新 URL。发布流程及后台服务命令见 [安装更新工作流](https://github.com/EiraWalker/Automation-Tools/blob/legacy/firefox-automation-20261017/firefox-chatgpt-toolkit/browser/firefox-puppeteer/references/userscript-workflow.md)。指定聊天没有运行标记；不能由下载记录推定扩展已保存脚本。
 
-2026-10-11 02:50（UTC+8）再次诊断归档按钮缺失：指定聊天有回答及原生复制操作栏，但归档宿主、队列宿主、全宽样式和通知宿主均不存在，运行版本为 null。随后用户提供 Nightly 油猴管理页截图，明确显示“No script is installed”；当前 Nightly **尚未安装脚本**，这解释了页面无功能。此前“已安装”和“旧页面未加载”是错误结论，不再用它们判断状态。后台采样中窗口、可见标签、剪贴板和页面状态保持不变，未刷新、注入脚本、发送或归档。诊断记录见 [工具验收](../browser/firefox-puppeteer/VALIDATION.md)。
+2026-10-11 02:50（UTC+8）再次诊断归档按钮缺失：指定聊天有回答及原生复制操作栏，但归档宿主、队列宿主、全宽样式和通知宿主均不存在，运行版本为 null。随后用户提供 Nightly 油猴管理页截图，明确显示“No script is installed”；当前 Nightly **尚未安装脚本**，这解释了页面无功能。此前“已安装”和“旧页面未加载”是错误结论，不再用它们判断状态。后台采样中窗口、可见标签、剪贴板和页面状态保持不变，未刷新、注入脚本、发送或归档。诊断记录见 [工具验收](https://github.com/EiraWalker/Automation-Tools/blob/legacy/firefox-automation-20261017/firefox-chatgpt-toolkit/browser/firefox-puppeteer/VALIDATION.md)。
 
-用户已明确授权配置对 `moz-extension://` 页面的调试访问，并要求从 [Nightly 专用入口](../browser/firefox-puppeteer/references/system-access.md) 重开。2026-10-12 已完成授权启动和真实 BiDi 扩展页访问，原生连接确认由用户允许；目前无需再次请求启动授权。
+用户已明确授权配置对 `moz-extension://` 页面的调试访问，并要求从 [Nightly 专用入口](https://github.com/EiraWalker/Automation-Tools/blob/legacy/firefox-automation-20261017/firefox-chatgpt-toolkit/browser/firefox-puppeteer/references/system-access.md) 重开。2026-10-12 已完成授权启动和真实 BiDi 扩展页访问，原生连接确认由用户允许；目前无需再次请求启动授权。
 
 同日安装诊断发现更深的阻塞：Tampermonkey 5.5.0 的原生 File → Save 会在内存及管理页缓存中显示 1.8.1.1，但扩展持久存储中没有对应的 UID、源码和元数据。后台重建后，新管理页为空，新聊天没有运行标记。此前以第二个管理页和已打开源码的哈希判断持久安装通过的结论撤销；缓存、内存与持久化必须分别核验。
 
 分字段临时写入实验定位到油猴生成的 `tfd.blob`：脚本文本、UID、条件和其余元数据能保存，Blob（包括新建的 5 字节 Blob）写入报 `An unexpected error occurred`。这些实验只使用自有临时键并清理；未改真实脚本记录或浏览器 profile。指定聊天的回答及工具栏选择器仍可匹配，因此没有据此修改 adapter。油猴扩展重新加载保留了 Firefox 进程，但后续 Blob 检查出现上下文失效，不能记作修复通过。
 
-官方同版本安装包已核对 AMO SHA-256；油猴配置及残留脚本存储已做 Windows DPAPI 加密备份并通过解密回环校验，私有材料均在根 `.local/userscript-update/`。当时请求追加授权：仅重装油猴以尝试重建异常存储，再恢复配置、安装脚本并验收。重装会清除扩展数据，未收到明确授权便不执行卸载。改用 Violentmonkey 前，Tampermonkey 安装和按钮恢复仍未通过，源码基础版本为 1.8.1，本机发布版本为 1.8.1.1；此历史修复方案不会随当前迁移自动执行，具体证据见 [工具验收](../browser/firefox-puppeteer/VALIDATION.md)。
+官方同版本安装包已核对 AMO SHA-256；油猴配置及残留脚本存储已做 Windows DPAPI 加密备份并通过解密回环校验，私有材料均在根 `.local/userscript-update/`。当时请求追加授权：仅重装油猴以尝试重建异常存储，再恢复配置、安装脚本并验收。重装会清除扩展数据，未收到明确授权便不执行卸载。改用 Violentmonkey 前，Tampermonkey 安装和按钮恢复仍未通过，源码基础版本为 1.8.1，本机发布版本为 1.8.1.1；此历史修复方案不会随当前迁移自动执行，具体证据见 [工具验收](https://github.com/EiraWalker/Automation-Tools/blob/legacy/firefox-automation-20261017/firefox-chatgpt-toolkit/browser/firefox-puppeteer/VALIDATION.md)。

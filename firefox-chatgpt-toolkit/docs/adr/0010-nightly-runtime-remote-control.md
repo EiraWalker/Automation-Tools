@@ -14,7 +14,7 @@
 
 ## 结果与边界
 
-Nightly 160.0a1 + Puppeteer Core 25.13.0 已在用户指定的后台 ChatGPT 标签通过只读验收：webdriver 为 false，原生 getter 存在，草稿指纹不变，窗口/剪贴板采样不变，断开后进程仍运行。详细范围见 [工具验收记录](../../browser/firefox-puppeteer/VALIDATION.md)。
+Nightly 160.0a1 + Puppeteer Core 25.13.0 已在用户指定的后台 ChatGPT 标签通过只读验收：webdriver 为 false，原生 getter 存在，草稿指纹不变，窗口/剪贴板采样不变，断开后进程仍运行。详细范围见 [工具验收记录](https://github.com/EiraWalker/Automation-Tools/blob/legacy/firefox-automation-20261017/firefox-chatgpt-toolkit/browser/firefox-puppeteer/VALIDATION.md)。
 
 已加载的 ChatGPT 页面可读取，不证明未来所有 Cloudflare 挑战会通过。未刷新、发送消息或安装用户脚本。本方案依赖 Nightly 实验功能；升级后重新执行 environment。背景输入、真实按钮点击和截图需要分别验收。
 

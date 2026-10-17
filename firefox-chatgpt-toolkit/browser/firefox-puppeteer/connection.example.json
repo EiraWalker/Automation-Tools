@@ -1,8 +1,0 @@
-{
-  "endpoint": "ws://127.0.0.1:9222/session",
-  "browserExecutable": "C:\\Program Files\\Firefox Nightly\\firefox.exe",
-  "target": {
-    "url": "https://chatgpt.com/c/REPLACE_WITH_APPROVED_TEST_CHAT",
-    "title": "REPLACE_WITH_EXACT_TAB_TITLE"
-  }
-}

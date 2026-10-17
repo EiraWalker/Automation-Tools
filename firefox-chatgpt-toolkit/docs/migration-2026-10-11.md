@@ -18,7 +18,7 @@ Git HEAD 保持 `6d2c02a0f42737e54be95d16ce28d759caa633ea`，remote 配置保持
 
 从新路径运行完整 verify 通过：84 项队列/归档测试、6 项 Puppeteer 任务测试、11 项历史原生工具测试、7 项截图适配器测试、两种 PowerShell 检查及 22 份文档链接检查。报告为 `output/automation/20261010T174026Z-48c16a56/report.json`；目录时间采用 UTC，本机验收日期为 2026-10-11。重建的 1.8.1 产物 SHA-256 仍为 `f421c7868b39ec2ff583cc1be2c52ba38a3f2ffb5a2ff15478f01c6e65e0f0bb`。
 
-`gpt-enhancement-queue`、`gpt-enhancement-native` 与 `firefox-puppeteer` 图谱已索引新路径。Codex 的 `C:\Users\alexz\.codex\skills\firefox-puppeteer` 是指向新模块的 Junction，skill 元数据检查通过；使用规范直接由项目维护。
+`gpt-enhancement-queue`、`gpt-enhancement-native` 与 `firefox-puppeteer` 图谱已索引新路径。Codex 的 `%USERPROFILE%\.codex\skills\firefox-puppeteer` 是指向新模块的 Junction，skill 元数据检查通过；使用规范直接由项目维护。
 
 ## 真实浏览器边界
 

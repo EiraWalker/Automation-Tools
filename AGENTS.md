@@ -30,12 +30,11 @@ Use its native installation, settings and update workflow. The environment basel
 is maintained in [project context](firefox-chatgpt-toolkit/docs/CONTEXT.md#项目运行环境).
 
 The canonical workspace is `E:\firefox dev`, including the ChatGPT plugin and
-Firefox development tools. For Firefox connection, page diagnosis, or browser
-acceptance, read [Puppeteer tasks](firefox-chatgpt-toolkit/browser/firefox-puppeteer/SKILL.md)
-and follow its task rules. Use the pinned Puppeteer Core connector with an existing
-Firefox Nightly Remote Control session; its runtime setup is documented in that
-module's README. Keep protocol implementation upstream; write only scoped
-project tasks. The old D-drive path is a compatibility Junction, not another checkout.
+Firefox development tools. Firefox automation is maintained separately in
+[Firefox Nightly Automation](https://github.com/EiraWalker/Firefox-Nightly-Automation). Read its skill before an authorized
+browser task. The old native and Puppeteer modules and their commands are retired;
+the archive branch preserves their historical documentation. The old D-drive path
+is a compatibility Junction, not another checkout.
 
 For ChatGPT Queue work, read [CONTEXT.md](CONTEXT.md) first. The active source is
 `firefox-chatgpt-toolkit/userscripts/chatgpt-queue`; `.local/legacy-workspace` is

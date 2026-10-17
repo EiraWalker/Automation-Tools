@@ -34,8 +34,7 @@ def docs():
         "0007-workspace-source-authority.md",
     ]]
     if any(not p.is_file() for p in required): raise ValueError("Project documents missing")
-    puppeteer_docs=ROOT/"firefox-chatgpt-toolkit/browser/firefox-puppeteer"
-    required = sorted(set(required) | set(folder.rglob("*.md")) | set(puppeteer_docs.rglob("*.md")) - set((puppeteer_docs/"node_modules").rglob("*.md")))
+    required = sorted(set(required) | set(folder.rglob("*.md")))
     broken=[]
     for p in required:
         for target in re.findall(r"\[[^\]]*\]\(([^)]+)\)",p.read_text(encoding="utf-8")):

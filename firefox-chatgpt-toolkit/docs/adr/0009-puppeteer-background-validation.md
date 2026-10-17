@@ -16,7 +16,7 @@
 
 Selenium 和现有 Firefox MCP 的 attach 路径涉及 Marionette；Playwright 的 Firefox 依赖定制浏览器。Puppeteer 更贴合连接现有原生 Firefox 的要求。依赖固定版本，升级时重新核查能力和副作用。
 
-后台截图继续使用 AgentCapture。任务规范以模块 [SKILL](../../browser/firefox-puppeteer/SKILL.md) 与 [任务规范](../../browser/firefox-puppeteer/references/task-rules.md) 为准。旧 native UIA/MCP 模块保留用于历史追溯和只读盘点，日常验收入口改为 Puppeteer。
+后台截图继续使用 AgentCapture。任务规范以模块 [SKILL](https://github.com/EiraWalker/Automation-Tools/blob/legacy/firefox-automation-20261017/firefox-chatgpt-toolkit/browser/firefox-puppeteer/SKILL.md) 与 [任务规范](https://github.com/EiraWalker/Automation-Tools/blob/legacy/firefox-automation-20261017/firefox-chatgpt-toolkit/browser/firefox-puppeteer/references/task-rules.md) 为准。旧 native UIA/MCP 模块保留用于历史追溯和只读盘点，日常验收入口改为 Puppeteer。
 
 ## 验收边界
 
